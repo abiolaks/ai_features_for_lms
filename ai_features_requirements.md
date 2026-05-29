@@ -1,11 +1,11 @@
-# 📘 AI Integration Expectations Summary (LMS)
+# AI Integration Expectations Summary (LMS)
 
 **Source Document:** LMS_AI_Integration_Expectations_v1.0.pdf
 **Purpose:** This document is a strategic blueprint setting the goals, outcomes, and quality bar for integrating Artificial Intelligence into the Learning Management Platform (LMS). It defines *what* AI must do, but not *how* it must be built.
 
 ---
 
-## 🎯 I. Strategic Pillars & Core Design Principles
+## I. Strategic Pillars & Core Design Principles
 
 The entire AI strategy rests on five non-negotiable principles:
 
@@ -15,13 +15,13 @@ The entire AI strategy rests on five non-negotiable principles:
 4. **Human-in-the-Loop for Publishing:** Admins must review and approve all AI-drafted content (assessments, course changes) before it is visible to learners.
 5. **Fail Gracefully:** If the AI service fails, core LMS functions (videos, quizzes, progress tracking) must remain fully operational without interruption.
 
-### 🛡️ Non-Negotiable Governance Rules
+### Non-Negotiable Governance Rules
 *   **Multi-tenant Isolation:** Data from one organization **must never** leak or be accessible to another.
 *   **Data Scoping:** Learner data is strictly limited to the *authenticated user*. Admin access to aggregate data must pass through separate, permissioned endpoints.
 
 ---
 
-## 🧠 II. Key AI Capabilities Map (ID: Capability)
+## II. Key AI Capabilities Map (ID: Capability)
 
 The features are divided into three primary groups based on their function and user type.
 
@@ -51,7 +51,7 @@ The features are divided into three primary groups based on their function and u
 
 ---
 
-## ⚙️ III. Technical Requirements & Operations
+## III. Technical Requirements & Operations
 
 ### Content Indexing Layer (AI-14)
 This system layer is critical as it underpins every grounded AI feature.
@@ -72,7 +72,7 @@ AI services are only allowed access to specific, curated "Data Products":
 
 ---
 
-## 🚀 IV. Implementation Roadmap & Critical Next Steps
+## IV. Implementation Roadmap & Critical Next Steps
 
 ### Phasing and Priorities
 The rollout is structured to build credibility before scaling:
