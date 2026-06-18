@@ -1,0 +1,18 @@
+{
+  "updated": "2026-06-10T00:00:00Z",
+  "total_slices": 8,
+  "architecture": "Cloudflare Workers + Huawei Qwen3.6 + LMS REST API",
+  "slices": {
+    "AI03": { "status": "pending", "title": "LLM Gateway (Huawei Qwen3.6)", "week": 1, "pr_lines": 300 },
+    "AI01": { "status": "pending", "title": "Content Indexing Pipeline", "week": 2, "pr_lines": 350 },
+    "AI02": { "status": "pending", "title": "RAG Retrieval Engine", "week": 2, "pr_lines": 150 },
+    "AI04": { "status": "pending", "title": "Tutor — Grounded Q&A", "week": 3, "pr_lines": 300 },
+    "AI08": { "status": "pending", "title": "Post-Quiz Insights", "week": 3, "pr_lines": 200 },
+    "AI06": { "status": "pending", "title": "Learning Paths", "week": 4, "pr_lines": 300 },
+    "AI07": { "status": "pending", "title": "Enhanced Recommendations", "week": 5, "pr_lines": 200 },
+    "AI13": { "status": "pending", "title": "Demo Dashboard", "week": "1-5", "pr_lines": 200 }
+  },
+  "post_mvp": ["AI04b", "AI05", "AI09", "AI10a", "AI10b", "AI11", "AI12"],
+  "cut": ["AI05 — LMS already has richer learner profiles"],
+  "platform_slices": "LMS is already built. No platform slices needed."
+}
