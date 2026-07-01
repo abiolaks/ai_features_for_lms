@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ai-gateway",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "ai": { "binding": "AI" },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lms-platform",
+      "database_id": "7b49ccf2-1fe0-46de-88b0-2332b7bbde32",
+      "migrations_dir": "./migrations"
+    }
+  ],
+
+  "kv_namespaces": [
+    {
+      "binding": "LMS_CACHE",
+      "id": "15ec0a3673bd49de87ec203f6a356bde"
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "ai-gateway-test",
+  "main": "src/index.ts",
+  "compatibility_date": "2024-12-30",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lms-platform",
+      "database_id": "7b49ccf2-1fe0-46de-88b0-2332b7bbde32"
+    }
+  ],
+
+  "kv_namespaces": [
+    {
+      "binding": "LMS_CACHE",
+      "id": "15ec0a3673bd49de87ec203f6a356bde"
+    }
+  ]
+}

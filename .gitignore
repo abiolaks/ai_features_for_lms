@@ -217,3 +217,9 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 .DS_Store
+
+# Cloudflare Workers
+node_modules/
+.wrangler/
+worker-configuration.d.ts
+*.tsbuildinfo
