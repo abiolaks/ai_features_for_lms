@@ -1,4 +1,4 @@
-## 2026-07-02 — Contract: What the Backend Engineer Needs
+## Session: — Contract: What the Backend Engineer Needs
 
 **Your URLs (for development):**
 ```
@@ -22,7 +22,7 @@ https://ai-gateway.yomi-alarape.workers.dev    ← Internal only (tutor calls th
 
 ---
 
-## 2026-07-02 — AI04 Prompt Tuning: "ONLY" vs "based on"
+## Session: — AI04 Prompt Tuning: "ONLY" vs "based on"
 
 **Symptom:** LLM returned "I couldn't find that" even when relevant transcript content was provided in the prompt (score 0.526, excerpt about AI reshaping business).
 
@@ -55,7 +55,7 @@ curl -X POST .../tutor/ask -d '{"question":"why is trust important in AI?",...}'
 
 ---
 
-## 2026-07-02 — Production Readiness Checklist (LMS Integration + Cleanup)
+## Session: — Production Readiness Checklist (LMS Integration + Cleanup)
 
 **AI01 markers** (search `LMS_INTEGRATION` in `workers/ai-indexing/src/index.ts`):
 1. Webhook verification — uncomment signature check, needs `LMS_WEBHOOK_SECRET`
@@ -75,7 +75,7 @@ curl -X POST .../tutor/ask -d '{"question":"why is trust important in AI?",...}'
 
 ---
 
-## 2026-07-02 — LMS Integration Points in ai-indexing (stub markers)
+## Session: — LMS Integration Points in ai-indexing (stub markers)
 
 **Question:** Where in the code do I add LMS API calls and secrets later?
 
@@ -99,7 +99,7 @@ All set via `npx wrangler secret put`. No wrangler.jsonc changes needed — env 
 
 ---
 
-## 2026-07-02 — DECISION: Direct Vectorize over AI Search (beta bug workaround)
+## Session: — DECISION: Direct Vectorize over AI Search (beta bug workaround)
 
 **Context:** AI Search (beta) consistently failed to persist vectors to Vectorize. The "builtin" type with `items.upload()` and "r2" type both generated embeddings but stalled on "pending Vectorize ingestion confirmation" indefinitely. Five attempts across different instance types, fresh instances, and configs all failed.
 
@@ -120,7 +120,7 @@ All set via `npx wrangler secret put`. No wrangler.jsonc changes needed — env 
 
 ---
 
-## 2026-07-02 — BLOCKER: Qwen3 Embedding model outputs 1024 dims, not 384
+## Session: — BLOCKER: Qwen3 Embedding model outputs 1024 dims, not 384
 
 **Symptom:** `VECTOR_UPSERT_ERROR: expected 384 dimensions, got 1024`
 
@@ -132,7 +132,7 @@ All set via `npx wrangler secret put`. No wrangler.jsonc changes needed — env 
 
 ---
 
-## 2026-07-02 — How does AI indexing work end-to-end? (Chunking, Embedding, Sources)
+## Session: — How does AI indexing work end-to-end? (Chunking, Embedding, Sources)
 
 **Question:** How does the ai-indexing work and how does it embed and store the chunks, and how does it know the sources it uses?
 
@@ -195,7 +195,7 @@ The chunk is never orphaned — it always references back to its source lesson/c
 
 ---
 
-## 2026-07-02 — BLOCKER: VTT Fetch Returns 404 (Empty Secrets)
+## Session: — BLOCKER: VTT Fetch Returns 404 (Empty Secrets)
 
 **Symptom:** Video indexing returned `"status":"fallback"` with "Caption generation timed out after 60s"
 
@@ -214,7 +214,7 @@ The chunk is never orphaned — it always references back to its source lesson/c
 
 ---
 
-## 2026-07-02 — BLOCKER: Diagnostic Stub Instead of Pipeline
+## Session: — BLOCKER: Diagnostic Stub Instead of Pipeline
 
 **Symptom:** All 16 unit tests failed. Worker returned `{tokenLen, acctLen, fetchResult}` instead of `{status:"indexed"}`.
 
@@ -227,7 +227,7 @@ The chunk is never orphaned — it always references back to its source lesson/c
 
 ---
 
-## 2026-07-02 — How to verify AI indexing works end-to-end
+## Session: — How to verify AI indexing works end-to-end
 
 **Steps:**
 ```bash
@@ -253,7 +253,7 @@ Dashboard verification: Workers & Pages → ai-indexing (invocations), AI → AI
 
 ---
 
-## 2026-07-02 — DECISION: REST API for VTT, not Stream Binding
+## Session: — DECISION: REST API for VTT, not Stream Binding
 
 **Context:** The Stream binding (`env.STREAM`) handles captions.list(), captions.generate(), captions.upload(), captions.delete() — but has NO method to read VTT content. We need the actual transcript text.
 
@@ -263,7 +263,7 @@ Dashboard verification: Workers & Pages → ai-indexing (invocations), AI → AI
 
 ---
 
-## 2026-07-02 — DECISION: Metadata-Only Fallback
+## Session: — DECISION: Metadata-Only Fallback
 
 **Context:** What happens if caption generation fails (no audio, API error, timeout)?
 

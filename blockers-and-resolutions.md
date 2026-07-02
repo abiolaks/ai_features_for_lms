@@ -7,9 +7,8 @@
 
 ## BLOCKER: AI01 — VTT Fetch Returns 404
 
-**Date:** 2026-07-02
 **Slice:** AI01 Content Indexing
-**Time to resolve:** ~90 minutes
+**Time to resolve:** —
 
 ### Symptom
 
@@ -82,7 +81,7 @@ The 815-character transcript was successfully extracted from the VTT file.
 
 2. **`wrangler secret put` can create empty secrets.** The secrets existed in the list but had zero-length values. Always verify with a diagnostic endpoint after setting secrets.
 
-3. **Always add a `/env-check` diagnostic endpoint early.** It saved ~30 minutes of debugging. Without it, we'd still be guessing whether secrets were loaded.
+3. **Always add a `/env-check` diagnostic endpoint early.** It saved significant debugging time. Without it, we'd still be guessing whether secrets were loaded.
 
 4. **Diagnostic endpoints (`/captions/:id`, `/videos`, `/env-check`) are worth the code.** They don't affect the API contract and can be removed or auth-gated later.
 
@@ -90,9 +89,8 @@ The 815-character transcript was successfully extracted from the VTT file.
 
 ## BLOCKER: AI01 — Source Code Was a Diagnostic Stub
 
-**Date:** 2026-07-02
 **Slice:** AI01 Content Indexing
-**Time to resolve:** ~30 minutes
+**Time to resolve:** —
 
 ### Symptom
 
@@ -148,4 +146,3 @@ Rewrote `src/index.ts` from scratch following the AI01 spec (`Issues/ai/done/AI0
 | VTT fetch 404 | ~90 min | Empty secrets (CLOUDFLARE_STREAM_API_TOKEN, CLOUDFLARE_ACCOUNT_ID) | Created API token + set secrets via `wrangler secret put` |
 | 16/16 tests failing | ~30 min | Source was diagnostic stub, not pipeline | Rewrote `src/index.ts` with full AI01 implementation |
 
-**Total AI01 debugging time:** ~2 hours (blamed on silent state: empty secrets + incorrect source code)

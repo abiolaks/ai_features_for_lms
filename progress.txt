@@ -38,7 +38,6 @@
 - [ ] Raise score threshold from 0.1 to 0.5
 - [ ] Switch from .workers.dev URLs to custom domain
 
-## 2026-07-02
 - Implemented AI01 Content Indexing Pipeline (replaced diagnostic stub)
 - Fixed VTT fetch: CLOUDFLARE_STREAM_API_TOKEN + CLOUDFLARE_ACCOUNT_ID were empty
 - Bypassed AI Search beta bug → direct Vectorize (Workers AI embed + upsert)
@@ -49,7 +48,6 @@
 - Added session-knowledge + ai-indexing-knowledge agent skills
 - All changes committed, tests green, workers deployed
 
-## 2026-07-01
 - Scaffolded workers/ directory (7 Workers + shared lib)
 - Created wrangler.jsonc for all 7 Workers
 - Implemented AI03 LLM Gateway (src/index.ts, 90 lines)
