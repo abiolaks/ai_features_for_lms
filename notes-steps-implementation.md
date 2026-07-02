@@ -174,3 +174,110 @@ if the answer isn't there. No hallucinations from thin air.
 Blocked by: AI Search instances (org-test-lessons, org-test-courses, org-test-assessments)
 Also needs: test video in Cloudflare Stream, LMS_WEBHOOK_SECRET, STREAM binding
 No longer needed: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (Stream binding handles auth)
+
+---
+
+## July 2, 2026 — AI01 Content Indexing Pipeline
+
+### WHAT WAS FIXED: The Diagnostic Stub
+
+The deployed worker had a diagnostic stub instead of the real indexing logic.
+It only checked token lengths and returned a VTT preview — no routing, no
+validation, no AI Search integration. All 16 unit tests failed.
+
+**Before (diagnostic stub):**
+```typescript
+export default {
+  async fetch(req: Request, env: Env): Promise<Response> {
+    const tokenLen = (env.CLOUDFLARE_STREAM_API_TOKEN || '').length;
+    const acctLen = (env.CLOUDFLARE_ACCOUNT_ID || '').length;
+    return Response.json({ tokenLen, acctLen, vttUrl, fetchResult });
+  }
+};
+```
+
+**After (full pipeline):** ~280 lines implementing all AI01 routes.
+
+### What was implemented
+
+| Route | Purpose |
+|-------|---------|
+| `POST /index` | Accepts publish events, handles text (metadata upload) and video (caption extraction) |
+| `POST /deindex` | Accepts unpublish events, deletes from AI Search |
+| `POST /backfill` | Lists Stream videos, counts ready vs processing |
+| `GET /videos` | Diagnostic: list all Stream videos |
+| `GET /captions/:id` | Diagnostic: check caption status + VTT content |
+
+### Video Pipeline (the heart of AI01)
+
+```
+1. Check streamStatus === "ready" → if not, return 202 queued
+2. Check captions via STREAM binding → captions.list()
+3a. Captions exist → fetch VTT via REST API → extract text
+3b. No captions → generate via AI → poll until ready → fetch VTT
+4. Upload transcript + metadata to AI Search
+5. Fallback: if captioning fails → upload metadata-only content
+```
+
+### VTT Fetch — The Blocker That Took 1.5 Hours
+
+The Stream binding (`env.STREAM`) handles videos, captions list/generate/delete,
+but has **no method to fetch VTT content**. That requires the REST API:
+
+```
+GET https://api.cloudflare.com/client/v4/accounts/{ACCOUNT_ID}/stream/{VIDEO_ID}/captions/en/vtt
+Authorization: Bearer {API_TOKEN}
+```
+
+Two secrets were registered but EMPTY in the deployed worker:
+- `CLOUDFLARE_STREAM_API_TOKEN` → len=0
+- `CLOUDFLARE_ACCOUNT_ID` → len=0
+
+**Fix:** Created a Cloudflare API token with `Stream:Read` + `Account Settings:Read`,
+set both via `wrangler secret put`. See `blockers-and-resolutions.md` for details.
+
+### Live end-to-end test
+
+```bash
+# Index a real Stream video (LumeraUnit1.mp4, 57s)
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/index \
+  -d '{"event":"publish","org_id":"org-test","entity":{
+    "id":"lesson-lumera-unit1","title":"Lumera Unit 1",
+    "contentType":"video","cloudflareVideoId":"69a58083...",
+    "streamStatus":"ready","durationSeconds":57}}'
+
+# Response: {"status":"indexed","transcript_source":"existing","content_length":815}
+```
+
+✅ VTT fetched from Cloudflare Stream API
+✅ 815 chars of transcript extracted from WebVTT
+✅ Uploaded to `org-test-lessons` AI Search instance
+✅ Indexing job triggered (embedding + Vectorize ingestion)
+
+### Tests: 16/16 passing
+
+- 6 validation tests (405, 404, 400 on bad input)
+- 4 VTT parsing tests (extractTextFromVTT)
+- 2 text indexing tests
+- 1 video queuing test
+- 1 deindex test
+- 2 backfill tests
+
+### Deployed
+
+- URL: `https://ai-indexing.yomi-alarape.workers.dev`
+- Version: `dcf1246e-1865-4afa-97af-31ed8da08df8`
+- Bindings: AI_SEARCH (lms-platform), STREAM, INDEXING_QUEUE
+- Secrets: CLOUDFLARE_STREAM_API_TOKEN (len=53), CLOUDFLARE_ACCOUNT_ID (len=32)
+
+### Updated project state
+
+| Slice | Status | Week | Notes |
+|-------|--------|------|-------|
+| AI03 LLM Gateway | ✅ DONE | 1 | Deployed, tested, 14/14 tests pass |
+| AI01 Content Indexing | ✅ DONE | 2 | Deployed, tested, 16/16 tests pass, live VTT fetch working |
+| AI04 Tutor | ⬜ pending | 3 | Blocked by AI01 (was blocking, now unblocked) |
+| AI08 Post-Quiz Insights | ⬜ pending | 3 | Needs LMS_GATEWAY_URL, LMS_INTERNAL_KEY |
+| AI06 Learning Paths | ⬜ pending | 4 | Needs LMS_GATEWAY_URL, LMS_INTERNAL_KEY |
+| AI07 Recommendations | ⬜ pending | 5 | Needs LMS_GATEWAY_URL, LMS_INTERNAL_KEY |
+| AI13 Demo Dashboard | ⬜ ongoing | 1–5 | One card added per slice |
