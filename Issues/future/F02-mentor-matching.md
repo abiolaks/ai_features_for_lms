@@ -1,4 +1,3 @@
-GitHub Issue: [#12](https://github.com/datazone-ai/ai_features_for_lms/issues/12)
 
 # Future: F02 — Mentor Matching
 

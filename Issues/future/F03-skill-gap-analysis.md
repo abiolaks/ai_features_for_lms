@@ -1,4 +1,3 @@
-GitHub Issue: [#13](https://github.com/datazone-ai/ai_features_for_lms/issues/13)
 
 # Future: F03 — Skill-Gap Analysis & Session Insights
 

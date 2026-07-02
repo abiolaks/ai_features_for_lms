@@ -1,4 +1,3 @@
-GitHub Issue: [#11](https://github.com/datazone-ai/ai_features_for_lms/issues/11)
 
 # Future: F01 — CV Parsing for Learner Profiles
 
