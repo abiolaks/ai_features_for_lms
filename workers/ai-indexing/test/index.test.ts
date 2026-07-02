@@ -6,23 +6,13 @@ import {
 } from 'cloudflare:test';
 import worker, { extractTextFromVTT } from '../src/index';
 
-// ──── Mock Stream + AI Search bindings ────
-// Both are edge-only, so we inject mocks.
+// ──── Mock Stream + AI + Vectorize bindings ────
 
 function mockStreamVideo() {
   return {
     captions: {
       list: vi.fn().mockResolvedValue([]),
       generate: vi.fn().mockResolvedValue({ status: 'inprogress' }),
-    },
-  };
-}
-
-function mockAiSearchInstance() {
-  return {
-    items: {
-      upload: vi.fn().mockResolvedValue(undefined),
-      delete: vi.fn().mockResolvedValue(undefined),
     },
   };
 }
@@ -35,9 +25,15 @@ beforeAll(() => {
     },
   };
 
-  (env as any).AI_SEARCH = {
-    create: vi.fn().mockResolvedValue(undefined),
-    get: vi.fn().mockReturnValue(mockAiSearchInstance()),
+  // Workers AI: returns a mock 384-dim embedding vector
+  (env as any).AI = {
+    run: vi.fn().mockResolvedValue({ data: [new Array(384).fill(0.1)] }),
+  };
+
+  // Vectorize: mock upsert + delete
+  (env as any).VECTORIZE_INDEX = {
+    upsert: vi.fn().mockResolvedValue(undefined),
+    deleteByIds: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -166,11 +162,11 @@ describe('extractTextFromVTT', () => {
 });
 
 // ════════════════════════════════════════════════════════
-//  POST /index — text lesson (no video)
+//  POST /index — text lesson
 // ════════════════════════════════════════════════════════
 
 describe('POST /index — text lesson', () => {
-  it('indexes text content as metadata-only', async () => {
+  it('indexes text content, calls embedding + upsert', async () => {
     const res = await callWorker('/index', {
       event: 'publish',
       org_id: 'org-test',
@@ -188,24 +184,15 @@ describe('POST /index — text lesson', () => {
     expect(body.status).toBe('indexed');
     expect(body.transcript_source).toBe('none');
     expect(body.content_length).toBeGreaterThan(0);
-    expect(body.content_length).toBeLessThan(200); // metadata-only is short
-  });
+    expect(body.content_length).toBeLessThan(200);
 
-  it('uploads to correct AI Search instance', async () => {
-    const getSpy = (env as any).AI_SEARCH.get;
-    getSpy.mockClear();
-
-    await callWorker('/index', {
-      event: 'publish',
-      org_id: 'org-acme',
-      entity: {
-        id: 'lesson-99',
-        title: 'ACME Lesson',
-        contentType: 'text',
-      },
-    });
-
-    expect(getSpy).toHaveBeenCalledWith('org-acme-lessons');
+    // Verify embedding was called
+    expect((env as any).AI.run).toHaveBeenCalled();
+    // Verify upsert was called with correct ID
+    expect((env as any).VECTORIZE_INDEX.upsert).toHaveBeenCalled();
+    const upsertCall = (env as any).VECTORIZE_INDEX.upsert.mock.calls[0][0][0];
+    expect(upsertCall.id).toBe('lesson-lesson-text-1');
+    expect(upsertCall.metadata.org_id).toBe('org-test');
   });
 });
 
@@ -231,10 +218,6 @@ describe('POST /index — video lesson', () => {
     const body: any = await res.json();
     expect(body.status).toBe('queued');
   });
-
-  // Note: full caption extraction flow (generate → poll → VTT parse → upload)
-  // is tested via integration (wrangler dev + real Stream video).
-  // Unit tests verify the code path branches: not-ready → queued, text → metadata.
 });
 
 // ════════════════════════════════════════════════════════
@@ -242,11 +225,7 @@ describe('POST /index — video lesson', () => {
 // ════════════════════════════════════════════════════════
 
 describe('POST /deindex', () => {
-  it('deletes from correct AI Search instance', async () => {
-    const getSpy = (env as any).AI_SEARCH.get;
-    const mockInstance = mockAiSearchInstance();
-    getSpy.mockReturnValue(mockInstance);
-
+  it('deletes from Vectorize', async () => {
     const res = await callWorker('/deindex', {
       event: 'unpublish',
       org_id: 'org-test',
@@ -256,8 +235,7 @@ describe('POST /deindex', () => {
     expect(res.status).toBe(200);
     const body: any = await res.json();
     expect(body.status).toBe('deindexed');
-    expect(getSpy).toHaveBeenCalledWith('org-test-lessons');
-    expect(mockInstance.items.delete).toHaveBeenCalledWith('lesson-lesson-to-delete.json');
+    expect((env as any).VECTORIZE_INDEX.deleteByIds).toHaveBeenCalledWith(['lesson-lesson-to-delete']);
   });
 });
 

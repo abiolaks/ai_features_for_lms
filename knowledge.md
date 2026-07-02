@@ -1,3 +1,36 @@
+## 2026-07-02 — DECISION: Direct Vectorize over AI Search (beta bug workaround)
+
+**Context:** AI Search (beta) consistently failed to persist vectors to Vectorize. The "builtin" type with `items.upload()` and "r2" type both generated embeddings but stalled on "pending Vectorize ingestion confirmation" indefinitely. Five attempts across different instance types, fresh instances, and configs all failed.
+
+**Decision:** Bypass AI Search entirely. Use Workers AI (`@cf/qwen/qwen3-embedding-0.6b`) to embed content ourselves, upsert directly to our own Vectorize index (`lms-lessons`, 1024-dim cosine metric). This is simpler, instant (no indexing job needed), and uses mature stable APIs.
+
+**Trade-offs:**
+- Gain: 1024-dim vectors (vs AI Search's 384), instant upsert, no indexing jobs, full control over metadata
+- Lose: No auto-chunking (we'll add when content exceeds model ctx window), no hybrid search (re-add later via keyword index), no auto-reranking
+
+**Pipeline:** `Stream → VTT → transcript → env.AI.run(embedding_model) → env.VECTORIZE_INDEX.upsert([{id, values, metadata: {title, lesson_id, course_id, org_id, content, transcript_source}}])`
+
+**Verification:** Querying `lms-lessons` by vector ID confirms 2 vectors stored, semantic similarity working (lumera-u1 query returns itself at score 0.999999, unrelated content at 0.0667).
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (rewritten for Vectorize)
+- `workers/ai-indexing/wrangler.jsonc` (AI + Vectorize bindings)
+- `workers/ai-indexing/test/index.test.ts` (mocks updated)
+
+---
+
+## 2026-07-02 — BLOCKER: Qwen3 Embedding model outputs 1024 dims, not 384
+
+**Symptom:** `VECTOR_UPSERT_ERROR: expected 384 dimensions, got 1024`
+
+**Root cause:** Vectorize index created with `--dimensions 384` (based on earlier assumption from AI Search instance). `@cf/qwen/qwen3-embedding-0.6b` outputs 1024-dim vectors.
+
+**Resolution:** Deleted and recreated `lms-lessons` index with `--dimensions 1024 --metric cosine`. Redeployed worker to pick up new index config.
+
+**Prevention:** Check model docs for actual dimensions before creating Vectorize indexes. Cloudflare's model catalog: https://developers.cloudflare.com/workers-ai/models/
+
+---
+
 ## 2026-07-02 — How does AI indexing work end-to-end? (Chunking, Embedding, Sources)
 
 **Question:** How does the ai-indexing work and how does it embed and store the chunks, and how does it know the sources it uses?
