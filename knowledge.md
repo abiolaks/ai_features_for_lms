@@ -1,3 +1,27 @@
+## 2026-07-02 — Contract: What the Backend Engineer Needs
+
+**Your URLs (for development):**
+```
+https://ai-indexing.yomi-alarape.workers.dev   ← POST /index, /deindex
+https://ai-tutor.yomi-alarape.workers.dev      ← POST /tutor/ask
+https://ai-gateway.yomi-alarape.workers.dev    ← Internal only (tutor calls this)
+```
+
+**What the backend engineer sends:**
+1. `POST /index` — when a lesson is published: `{ event:"publish", org_id, entity: { id, title, contentType, cloudflareVideoId, streamStatus, course_id, module_id?, durationSeconds } }`
+2. `POST /deindex` — when unpublished: `{ event:"unpublish", org_id, entity: { id } }`
+3. `POST /tutor/ask` — when learner asks: `{ question, lesson_id, course_id, org_id, expand_scope? }`
+
+**What he gets back:**
+- `/index` → `{ status:"indexed", transcript_source, content_length }`
+- `/tutor/ask` → `{ answer, citations: [{ lesson_title, excerpt, score }], scope_expansion_suggested }`
+
+**For production:** Switch from `.workers.dev` to custom domain. Single gateway worker pattern gives one clean URL: `https://ai.lms.example.com/index` etc.
+
+**What he does NOT need to know:** Vectorize, embedding model, VTT extraction, prompt construction, AI03 gateway.
+
+---
+
 ## 2026-07-02 — AI04 Prompt Tuning: "ONLY" vs "based on"
 
 **Symptom:** LLM returned "I couldn't find that" even when relevant transcript content was provided in the prompt (score 0.526, excerpt about AI reshaping business).
