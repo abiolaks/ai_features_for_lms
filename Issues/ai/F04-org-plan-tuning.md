@@ -1,3 +1,5 @@
+GitHub Issue: [#14](https://github.com/datazone-ai/ai_features_for_lms/issues/14)
+
 # Future: F04 — Org Learning Plan Tuning
 
 - **Phase:** 3
