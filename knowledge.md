@@ -1,3 +1,36 @@
+## 2026-07-02 — AI04 Prompt Tuning: "ONLY" vs "based on"
+
+**Symptom:** LLM returned "I couldn't find that" even when relevant transcript content was provided in the prompt (score 0.526, excerpt about AI reshaping business).
+
+**Root cause:** The grounded prompt said "Answer the question using ONLY the provided content" with a fallback of "If the answer is not in the content, say I couldn't find that." Llama-3.2-3b interpreted this too conservatively — it chose to reject rather than summarize.
+
+**Fix:** Changed prompt to "Answer the question based on the provided content below." and moved the rejection instruction to "If the content is irrelevant to the question." This encourages summarization while still preventing hallucination.
+
+**Before:** `"Answer the question using ONLY the provided content below."`
+**After:** `"Answer the question based on the provided content below."`
+
+**Test queries for live verification:**
+```bash
+# AI in business (matches Lumera transcript) — should return grounded answer
+curl -X POST .../tutor/ask -d '{"question":"how is AI reshaping business?","lesson_id":"lumera-u1",...}'
+
+# What is Python? (matches py-intro) — should return grounded answer
+curl -X POST .../tutor/ask -d '{"question":"What is Python?","lesson_id":"py-intro",...}'
+
+# Quantum computing (not in any lesson) — should return "couldn't find"
+curl -X POST .../tutor/ask -d '{"question":"What is quantum computing?","lesson_id":"lumera-u1",...}'
+
+# Course scope — searches both lessons
+curl -X POST .../tutor/ask -d '{"question":"What is this about?","expand_scope":"course"}'
+
+# Trust in AI (in the transcript)
+curl -X POST .../tutor/ask -d '{"question":"why is trust important in AI?",...}'
+```
+
+**Related files:** `workers/ai-tutor/src/index.ts` (buildPrompt function)
+
+---
+
 ## 2026-07-02 — Production Readiness Checklist (LMS Integration + Cleanup)
 
 **AI01 markers** (search `LMS_INTEGRATION` in `workers/ai-indexing/src/index.ts`):
