@@ -5,6 +5,8 @@
   "compatibility_date": "2026-07-01",
   "compatibility_flags": ["nodejs_compat"],
 
+  "stream": { "binding": "STREAM" },
+
   "ai_search_namespaces": [
     {
       "binding": "AI_SEARCH",
@@ -21,15 +23,19 @@
     ]
   },
 
-  "services": [
-    {
-      "binding": "AI_GATEWAY",
-      "service": "ai-gateway"
-    }
-  ],
-
   "observability": {
-    "enabled": true,
-    "head_sampling_rate": 1
+    "enabled": false,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    },
+    "traces": {
+      "enabled": false,
+      "persist": true,
+      "head_sampling_rate": 1
+    }
   }
 }

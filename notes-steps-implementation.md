@@ -126,6 +126,51 @@ Mock injected via `env.AI = { run: vi.fn() }` for local vitest runs.
 | AI07 Recommendations | ⬜ pending | 5 | Needs LMS_GATEWAY_URL, LMS_INTERNAL_KEY |
 | AI13 Demo Dashboard | ⬜ ongoing | 1–5 | One card added per slice |
 
+### AI Search Instances — Why three per org?
+
+AI Search is Cloudflare's managed search engine. It handles chunking, embedding,
+and ranking automatically. Each instance is a separate search index:
+
+| Instance | Stores | Used by |
+|----------|--------|---------|
+| `org-{id}-lessons` | Video transcripts, lesson text | AI04 Tutor — "find lesson content about variables" |
+| `org-{id}-courses` | Course titles, descriptions | AI06 Paths — "which courses cover ML?" |
+| `org-{id}-assessments` | Quiz questions, rubrics | AI08 Insights — "find quiz questions about functions" |
+
+**Why separate?** Searching "variables" in lessons returns transcripts.
+Searching "variables" in assessments returns quiz questions. Different use cases,
+different indexes. The Tutor searches only lessons so results are clean.
+
+**Multi-tenant isolation:** `org-test-lessons` is a physically separate instance
+from `org-acme-lessons`. The binding `env.AI_SEARCH.get("org-test-lessons")`
+can never return org-acme's data.
+
+### How does the AI Tutor know which lesson to answer from?
+
+The learner is already inside a specific lesson when they ask. The request includes
+`lesson_id`, so the Tutor searches ONLY that lesson's transcript in AI Search:
+
+```
+Learner watching "Python - Lesson 3: Variables"
+→ Asks "what's the difference between int and float?"
+→ Tutor searches AI Search with filter: lesson_id = "lesson-123"
+→ Returns chunks from THAT lesson's transcript only
+→ If nothing found, expands scope: lesson → module → course
+```
+
+The scope ladder:
+
+| Scope | Filter | Trigger |
+|-------|--------|---------|
+| Lesson | `lesson_id = X` | Default — first attempt |
+| Module | `module_id = Y` | If lesson returns no chunks |
+| Course | `course_id = Z` | If module returns no chunks |
+
+This means the answer is always grounded in real transcript text — the prompt
+forces the LLM to "use ONLY the provided content" and say "I couldn't find that"
+if the answer isn't there. No hallucinations from thin air.
+
 ### Next up: AI01 Content Indexing
-Blocked by secrets: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, LMS_WEBHOOK_SECRET
-Also needs: AI Search instances provisioned (org-test-courses, org-test-lessons, org-test-assessments)
+Blocked by: AI Search instances (org-test-lessons, org-test-courses, org-test-assessments)
+Also needs: test video in Cloudflare Stream, LMS_WEBHOOK_SECRET, STREAM binding
+No longer needed: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (Stream binding handles auth)
