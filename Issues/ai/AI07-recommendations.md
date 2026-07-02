@@ -1,3 +1,5 @@
+GitHub Issue: [#5](https://github.com/datazone-ai/ai_features_for_lms/issues/5)
+
 # AI07: Enhanced Course Recommendations
 
 - **Type:** AFK

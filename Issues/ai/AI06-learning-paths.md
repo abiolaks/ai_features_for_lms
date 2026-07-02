@@ -1,3 +1,5 @@
+GitHub Issue: [#4](https://github.com/datazone-ai/ai_features_for_lms/issues/4)
+
 # AI06: Personalized Learning Paths
 
 - **Type:** AFK

@@ -1,3 +1,5 @@
+GitHub Issue: [#7](https://github.com/datazone-ai/ai_features_for_lms/issues/7)
+
 # AI13: Demo Dashboard
 
 - **Type:** AFK
@@ -14,12 +16,12 @@ A single-page dashboard that proves every AI feature works end-to-end with real 
 ### Wave Structure
 
 **Week 1 (AI03):** Shell page + AI03 Gateway card
-- Shows: Huawei connection status, budget usage, model health
-- Card: "LLM Gateway — Connected to Qwen3.6-flash. Budget: 45,230 / 1,000,000 tokens."
+- Shows: Workers AI connection status, budget usage, model health
+- Card: "LLM Gateway — Connected to Llama 3.2 / Mistral. Budget: 45,230 / 1,000,000 tokens."
 
-**Week 2 (AI01+AI02):** Indexing + Retrieval cards
-- Shows: Indexed lessons count, chunk count, retrieval demo
-- Card: "Indexed 3 lessons (142 chunks). Try a query: [_____] [Search]"
+**Week 2 (AI01):** Indexing card
+- Shows: Indexed lessons count, AI Search instance status, webhook events
+- Card: "Indexed 3 lessons (142 chunks). AI Search status: Active. Last webhook: 2 min ago."
 
 **Week 3 (AI04+AI08):** Tutor + Insights cards
 - Shows: Tutor Q&A demo, sample insight from real quiz
@@ -44,7 +46,7 @@ A single-page dashboard that proves every AI feature works end-to-end with real 
 
 - [ ] Dashboard loads at deployed Pages URL
 - [ ] Week 1: Shell + AI03 card shows live budget/model data
-- [ ] Week 2: AI01+AI02 cards work with real indexed content
+- [ ] Week 2: AI01 card shows indexed content + AI Search instance status
 - [ ] Week 3: AI04 tutor demo returns real cited answers; AI08 shows real insight
 - [ ] Week 4: AI06 generates path from real LMS data
 - [ ] Week 5: AI07 shows recommendations with AI explanations

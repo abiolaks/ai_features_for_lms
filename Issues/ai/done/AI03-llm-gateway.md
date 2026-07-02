@@ -1,3 +1,5 @@
+GitHub Issue: [#9](https://github.com/datazone-ai/ai_features_for_lms/issues/9)
+
 # AI03: LLM Gateway Worker
 
 - **Type:** AFK

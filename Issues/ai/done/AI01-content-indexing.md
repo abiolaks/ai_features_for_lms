@@ -1,3 +1,5 @@
+GitHub Issue: [#8](https://github.com/datazone-ai/ai_features_for_lms/issues/8)
+
 # AI01: Content Indexing Pipeline
 
 - **Type:** AFK

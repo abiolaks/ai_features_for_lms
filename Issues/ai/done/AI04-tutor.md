@@ -1,3 +1,5 @@
+GitHub Issue: [#10](https://github.com/datazone-ai/ai_features_for_lms/issues/10)
+
 # AI04: Tutor — Grounded Q&A
 
 - **Type:** AFK
