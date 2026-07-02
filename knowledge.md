@@ -1,3 +1,23 @@
+## 2026-07-02 — Production Readiness Checklist (LMS Integration + Cleanup)
+
+**AI01 markers** (search `LMS_INTEGRATION` in `workers/ai-indexing/src/index.ts`):
+1. Webhook verification — uncomment signature check, needs `LMS_WEBHOOK_SECRET`
+2. Metadata enrichment — uncomment LMS API fetch, needs `LMS_GATEWAY_URL` + `LMS_INTERNAL_KEY`
+
+**AI04 markers** (search `LMS_INTEGRATION` in `workers/ai-tutor/src/index.ts`):
+3. Fetch lesson metadata — replace Vectorize-as-metadata-source with LMS API call
+
+**Temporary workarounds to remove:**
+4. Post-filter (AI04 ~line 115) → replace with native Vectorize `filter:` param once metadata indexes propagate
+5. Score threshold 0.1 (AI04 ~line 20) → raise to 0.5 once more content is indexed
+
+**Secrets to set when LMS is live:**
+- `LMS_WEBHOOK_SECRET` — verify incoming webhooks
+- `LMS_GATEWAY_URL` — LMS REST API base URL
+- `LMS_INTERNAL_KEY` — X-API-Key auth header
+
+---
+
 ## 2026-07-02 — LMS Integration Points in ai-indexing (stub markers)
 
 **Question:** Where in the code do I add LMS API calls and secrets later?
