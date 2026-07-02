@@ -2,59 +2,75 @@
 
 Applies to all slices in this `Issues/` directory. Every slice inherits these constraints.
 
-## Open-Source Stack (zero Azure dependency at code level)
+## Stack (Cloudflare Workers + Vectorize)
 
-| Concern | Open-Source Tool | Why |
-|--------|-----------------|-----|
-| **Vector DB** | [LanceDB](https://lancedb.github.io/lancedb/) | Embedded, no server, zero-config. Files stored alongside code. Swap to Qdrant for production later. |
-| **LLM (local dev)** | [Ollama](https://ollama.com/) with open models | `llama3.2` for standard tier, `mistral` or `llama3.1:8b` for quality tier. No API keys. |
-| **LLM (gateway)** | Slice 3 wraps Ollama's HTTP API (identical pattern to OpenAI — `/api/generate` and `/api/chat`) | Same interface shape, easy to swap to cloud later. |
-| **Embeddings** | [sentence-transformers](https://www.sbert.net/) via `all-MiniLM-L6-v2` | 384-dim vectors, runs on CPU, ~80MB model. Used by chunking (AI01a), duplicate detection (AI11), and retrieval (AI02). Every embedding call traced via `trace_embedding()` → Phoenix. |
-| **Blob Storage** | Local filesystem (`data/blobs/`) for dev, Azurite Docker container for CI | Structured directory mirrors production `raw/` and `indexing/` containers. |
-| **Cache** | In-memory LRU cache ([`cachetools`](https://pypi.org/project/cachetools/)) | Zero infrastructure. Swap to Redis with one adapter later. |
-| **Database** | SQLite via [sqlite-utils](https://sqlite-utils.datasette.io/) or raw `sqlite3` | File-based, no server. Simple schema, easy to inspect. Swap to PostgreSQL via same SQLAlchemy models later. |
-| **Observability** | [OpenTelemetry](https://opentelemetry.io/) + [Arize Phoenix](https://phoenix.arize.com/) + [OpenInference](https://github.com/Arize-AI/openinference) | Distributed tracing across all services, LLM-aware spans (prompts, responses, tokens, embeddings), Phoenix UI at `:6006`, eval datasets for automated quality scoring. See P01b. |
-| **Reading Level** | [`textstat`](https://pypi.org/project/textstat/) | Flesch-Kincaid grade estimation, pure Python, no API calls. |
-| **HTTP Framework** | [FastAPI](https://fastapi.tiangolo.com/) + [uvicorn](https://www.uvicorn.org/) | Lightweight, typed, auto-docs at `/docs`. |
-| **Testing** | [pytest](https://docs.pytest.org/) + [httpx](https://www.python-httpx.org/) | Async test client for HTTP services. |
-| **Demo Dashboard** | Single HTML file + vanilla JS + FastAPI static mount | No framework, no build step. See Slice 13. |
+| Concern | Tool | Why |
+|--------|------|-----|
+| **Runtime** | Cloudflare Workers (TypeScript) | Edge-deployed, zero cold starts, service bindings for internal calls |
+| **Vector DB** | [Cloudflare Vectorize](https://developers.cloudflare.com/vectorize/) | 1024-dim cosine index, metadata filtering, no server to manage |
+| **LLM** | Workers AI (`@cf/meta/llama-3.2-3b-instruct`, `@cf/mistral/mistral-7b-instruct-v0.2-lora`) | Runs on Cloudflare's edge, no API keys, no external provider |
+| **LLM Gateway** | AI03 worker — service binding pattern | Single choke point for model selection, token budgeting, D1 tracking |
+| **Embeddings** | Workers AI (`@cf/qwen/qwen3-embedding-0.6b`) | 1024-dim vectors, runs on Cloudflare's edge |
+| **Video Content** | Cloudflare Stream | Video hosting with AI caption generation, VTT extraction via REST API |
+| **Database** | Cloudflare D1 (`lms-platform`) | SQLite-compatible, token budget tracking |
+| **Cache** | Cloudflare KV (`LMS_CACHE`) | Key-value store for response caching |
+| **Queue** | Cloudflare Queues (`indexing-jobs`) | Async job processing for video indexing |
+| **Testing** | Vitest + `@cloudflare/vitest-pool-workers` | Worker-aware test runner, mock bindings for edge-only services |
+| **Observability** | Wrangler logs + Workers Metrics dashboard | Per-worker invocation counts, error rates, latency |
+
+## Architecture Decisions
+
+### Direct Vectorize over AI Search
+AI Search (beta) failed to persist vectors reliably. Decision: embed with Workers AI directly, upsert to our own Vectorize index. No AI Search dependency. Simpler, faster, battle-tested APIs.
+
+### Service Bindings for Internal Calls
+AI04 Tutor calls AI03 Gateway via service binding (`env.AI_GATEWAY.fetch()`). No HTTP overhead, no exposed URLs, no auth. Fast and secure.
+
+### Post-Filter Fallback
+Vectorize metadata indexes take time to propagate. Until they do, we query without `filter:` and post-filter in JavaScript. Once indexes are stable, switch to native filtering (one line change).
+
+### Metadata Stored with Vectors
+Every vector carries full metadata (`title`, `lesson_id`, `course_id`, `org_id`, `content`, `transcript_source`). No separate metadata store. The Tutor builds citations directly from Vectorize results.
+
+### LMS Integration Stubs
+Three `LMS_INTEGRATION` markers in the codebase. Each shows exactly where to add LMS API calls and which secrets to set. The markers make the handoff to the backend engineer self-documenting.
 
 ## Code Principles
 
 ### Keep It Simple
-- Prefer stdlib over dependencies. Every dependency must justify itself.
-- One file per concern. If a file exceeds 300 lines, it's doing too much.
+- One Worker per concern. Each Worker handles one domain (indexing, tutoring, gateway).
+- Workers are ~200 lines. If approaching 300, extract helpers.
 - Functions are short (≤30 lines). If longer, extract.
-- No inheritance hierarchies. Composition and plain functions only.
+- Plain functions + fetch handlers. No inheritance, no classes, no frameworks.
 
 ### Comment Intent, Not Mechanics
-```python
-# GOOD: explains why
-# We cache for 24h because the catalogue snapshot updates nightly,
-# and re-fetching on every request would hammer the mock platform.
-cache = TTLCache(maxsize=100, ttl=86400)
+```typescript
+// GOOD: explains why
+// Post-filter until Vectorize metadata indexes propagate.
+// Remove when filter: param returns results reliably.
+const matches = results.matches.filter(m => m.metadata?.lesson_id === lessonId);
 
-# BAD: explains what (the code already says this)
-# Create a cache with 100 items and 86400 second TTL
-cache = TTLCache(maxsize=100, ttl=86400)
+// BAD: explains what (the code already says this)
+// Filter matches by lesson_id
+const matches = results.matches.filter(m => m.metadata?.lesson_id === lessonId);
 ```
-
-Every module starts with a 2-4 line docstring describing what it does and which slice(s) own it.
 
 ### PR Size
 - Target 200-400 lines per PR (including tests, config, comments).
 - Hard ceiling: 500 lines. If approaching it, split the slice further.
-- Reviewers should finish a PR in ≤20 minutes.
-
-### No Cloud Lock-in
-- All infrastructure is behind adapters (`StorageBackend`, `VectorStore`, `LLMProvider`, `CacheBackend`).
-- The adapter interface is defined in a `ports.py` file in each service.
-- Concrete implementations live in `adapters/` — one for local dev, one stub for future Azure.
-- Environment variables switch adapters: `VECTOR_STORE=lance`, `LLM_PROVIDER=ollama`.
 
 ### Self-Sufficient Testing
-- Every service starts and passes tests with `docker compose up -d && pytest`
-- No cloud account required. No API keys. No network calls (all models run locally).
-- Integration tests call real HTTP endpoints. Unit tests mock adapters at the port boundary.
-- Traces visible in Phoenix at `http://localhost:6006` — every integration test run produces observable traces.
-- Evals run against live traces: `make eval-all` scores groundedness, relevance, and tone across AI features.
+- Every Worker passes tests with `npx vitest run`
+- No cloud account required for unit tests (mock AI, Vectorize, Stream bindings)
+- Integration tests require `wrangler dev` with real bindings
+- Tests mock at the binding boundary — we test Worker logic, not Cloudflare's inference
+
+### API Contract
+- Every Worker's endpoints are documented in `docs/api-contract.md`
+- Request/response shapes, error codes, and integration flows are maintained there
+- The backend engineer only needs that one document to integrate
+
+### Issue Tracking
+- Every slice has a local `.md` file in `Issues/ai/` and a linked GitHub issue
+- Completed slices move to `Issues/ai/done/` and GitHub issue is closed
+- Future/Phase 2+ slices live in `Issues/future/`
