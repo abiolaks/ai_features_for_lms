@@ -1,3 +1,27 @@
+## 2026-07-02 — LMS Integration Points in ai-indexing (stub markers)
+
+**Question:** Where in the code do I add LMS API calls and secrets later?
+
+**Answer:** Two `LMS_INTEGRATION` comment blocks in `workers/ai-indexing/src/index.ts` → `handleIndex()`:
+
+1. **Webhook verification** (uses `LMS_WEBHOOK_SECRET`) — validates X-Webhook-Signature header
+2. **Metadata enrichment** (uses `LMS_GATEWAY_URL` + `LMS_INTERNAL_KEY`) — fetches additional lesson metadata from LMS REST API
+
+**Secrets needed when LMS is live:**
+| Secret | Purpose |
+|--------|---------|
+| `LMS_WEBHOOK_SECRET` | Verify incoming webhooks |
+| `LMS_GATEWAY_URL` | LMS REST API base URL |
+| `LMS_INTERNAL_KEY` | `X-API-Key` auth header |
+
+All set via `npx wrangler secret put`. No wrangler.jsonc changes needed — env vars are already referenced in the code comments.
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (lines ~228–248, search `LMS_INTEGRATION`)
+- `architecture/module-architecture.md` (updated to reflect Vectorize)
+
+---
+
 ## 2026-07-02 — DECISION: Direct Vectorize over AI Search (beta bug workaround)
 
 **Context:** AI Search (beta) consistently failed to persist vectors to Vectorize. The "builtin" type with `items.upload()` and "r2" type both generated embeddings but stalled on "pending Vectorize ingestion confirmation" indefinitely. Five attempts across different instance types, fresh instances, and configs all failed.
