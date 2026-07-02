@@ -198,12 +198,13 @@ function buildFilter(body: AskRequest): Record<string, string> {
 /** Build the grounded prompt that forces the LLM to use only provided content. */
 function buildPrompt(citations: Citation[], question: string): string {
   const contentBlocks = citations
-    .map((c) => `[Lesson: ${c.lesson_title}]\n${c.excerpt}`)
+    .map((c) => `[Lesson: ${c.lesson_title}]
+${c.excerpt}`)
     .join("\n\n");
 
   return [
-    "Answer the question using ONLY the provided content below.",
-    "If the answer is not in the content, say \"I couldn't find that in this lesson.\"",
+    "Answer the question based on the provided content below.",
+    "If the content is irrelevant to the question, say \"I couldn't find that in this lesson.\"",
     "Cite the lesson title for each fact. Be concise.",
     "",
     "CONTENT:",
@@ -214,7 +215,7 @@ function buildPrompt(citations: Citation[], question: string): string {
 }
 
 /** Tiny JSON helper. */
-function json(data: unknown, status: number): Response {
+function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: { "Content-Type": "application/json" },

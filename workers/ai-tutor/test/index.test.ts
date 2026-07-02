@@ -234,7 +234,7 @@ describe('Prompt construction', () => {
     const callBody = JSON.parse(await gatewaySpy.mock.calls[0][0].text());
     const prompt = callBody.messages[0].content;
 
-    expect(prompt).toContain('ONLY the provided content');
+    expect(prompt).toContain('based on the provided content');
     expect(prompt).toContain('[Lesson: Python Variables]');
     expect(prompt).toContain('QUESTION: What is X?');
   });
