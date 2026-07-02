@@ -24,8 +24,8 @@ workers/
 │   ├── types.ts              # Shared TS types for all Workers
 │   └── fetch-lms.ts          # LMS API client (not yet wired — needs secrets)
 ├── ai-gateway/               # AI03 ✅ DEPLOYED
-├── ai-indexing/              # AI01
-├── ai-tutor/                 # AI04
+├── ai-indexing/              # AI01 ✅ DEPLOYED
+├── ai-tutor/                 # AI04 ✅ DEPLOYED
 ├── ai-insights/              # AI08
 ├── ai-paths/                 # AI06
 ├── ai-recommendations/       # AI07
