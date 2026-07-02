@@ -223,6 +223,32 @@ async function handleCheckCaptions(videoId: string, env: Env): Promise<Response>
 // ════════════════════════════════════════════════════════
 
 async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
+  // ── LMS_INTEGRATION: Webhook verification ──
+  // TODO: When the LMS is live, verify the webhook signature here.
+  // The LMS will send an X-Webhook-Signature header with each request.
+  //
+  //   const secret = env.LMS_WEBHOOK_SECRET;
+  //   if (!verifyWebhook(body, request.headers, secret)) {
+  //     return Response.json({ error: "Invalid signature" }, { status: 401 });
+  //   }
+  //
+  // Secret to create:  npx wrangler secret put LMS_WEBHOOK_SECRET
+
+  // ── LMS_INTEGRATION: Enrich entity metadata ──
+  // TODO: When the LMS REST API is live, fetch additional lesson
+  // metadata (description, tags, sections) to enrich Vectorize content.
+  //
+  //   const resp = await fetch(
+  //     `${env.LMS_GATEWAY_URL}/api/v1/lessons/${entity.id}`,
+  //     { headers: { "X-API-Key": env.LMS_INTERNAL_KEY } }
+  //   );
+  //   const lmsLesson = await resp.json();
+  //   // Merge lmsLesson.description, lmsLesson.tags into metadata
+  //
+  // Secrets to create:
+  //   npx wrangler secret put LMS_GATEWAY_URL    (e.g. https://lms.example.com)
+  //   npx wrangler secret put LMS_INTERNAL_KEY   (shared API key)
+
   const { event, org_id, entity } = body;
   if (!event) return Response.json({ error: "Missing event" }, { status: 400 });
   if (!org_id) return Response.json({ error: "Missing org_id" }, { status: 400 });

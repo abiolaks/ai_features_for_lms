@@ -4,8 +4,8 @@
 
 | # | Module | Interface | What it encapsulates |
 |---|---|---|---|
-| 1 | **Content Indexing Service** | `index(content_event) → void`, `deindex(content_id) → void` | Chunking (~512 tokens, overlap), embedding generation, vector DB storage with full metadata (org, course, lesson, section, timestamp). Reacts to publish/update/delete events. 5-min update SLA, 60-sec deletion SLA. |
-| 2 | **RAG Retrieval Engine** | `retrieve(query, org_id, scope) → [chunk + citation]` | Vector search + metadata filtering. Scope enforcement (lesson/module/course). Returns chunks with citations (lesson title, section heading, video timestamp). Used by every grounded feature. |
+| 1 | **Content Indexing Service** | `index(content_event) → void`, `deindex(content_id) → void` | Extracts transcripts from Stream videos via REST API. Embeds content with `@cf/qwen/qwen3-embedding-0.6b` (1024-dim). Upserts directly to Vectorize index `lms-lessons` (cosine metric). No AI Search dependency — uses Workers AI + Vectorize bindings. Stores full metadata (title, lesson_id, course_id, org_id, transcript_source, content). Reacts to publish/update/delete events. |
+| 2 | **RAG Retrieval Engine** | `retrieve(query, org_id, scope) → [chunk + citation]` | Vector similarity search via Vectorize with metadata filtering (org_id, lesson_id, course_id). Returns matched vectors with full metadata for citation generation. Used by AI04 Tutor. |
 | 3 | **LLM Gateway** | `generate(prompt, tier, org_id) → response` | Provider abstraction, model routing (fast vs capable), token counting, org-level budget enforcement (soft throttle 80%, hard stop 100%). Single entry point for all LLM calls. |
 | 4 | **Multi-Tenant Security Middleware** | `enforce_org_context(request) → org_id` | Intercepts AI requests, injects/validates org ID. Ensures row-level filtering. Gateway-level, not sprinkled across features. |
 | 5 | **Usage Budgeting Service** | `check_budget(org_id, tokens) → allowed | denied` | Token-per-month caps per org. Throttle tracking. Used by LLM Gateway internally. |
