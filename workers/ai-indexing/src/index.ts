@@ -13,6 +13,7 @@ export interface Env {
   INDEXING_QUEUE: any;
   CLOUDFLARE_STREAM_API_TOKEN: string;
   CLOUDFLARE_ACCOUNT_ID: string;
+  LMS_WEBHOOK_SECRET: string;
 }
 
 // ──── Constants ────
@@ -144,6 +145,12 @@ export default {
     // All other endpoints: POST only
     if (req.method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
+    }
+
+    // ── Webhook auth (index / deindex / backfill) ──
+    const webhookSecret = req.headers.get("X-Webhook-Secret");
+    if (!webhookSecret || webhookSecret !== env.LMS_WEBHOOK_SECRET) {
+      return Response.json({ error: "Unauthorized — invalid or missing X-Webhook-Secret" }, { status: 401 });
     }
 
     let body: any;

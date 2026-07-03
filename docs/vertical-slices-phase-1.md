@@ -1,6 +1,6 @@
 # AI Features MVP — Vertical Slices
 
-> LMS platform is already built. AI layer is Cloudflare Workers calling Huawei Qwen3.6.
+> LMS platform is already built. AI layer is Cloudflare Workers calling Workers AI (Llama 3.2 / Mistral).
 > Each slice = one deployable Worker = one PR (200-400 lines).
 
 ---
@@ -12,7 +12,7 @@ LMS (ALREADY BUILT)              AI Workers (TO BUILD)            LLM
 ─────────────────────            ─────────────────────            ───
 /v1/lessons/{id}    ←── AI01 Indexing (chunk + embed + index)
 /v1/catalog         ←── AI02 RAG Retrieval (vector search)
-/v1/learner/profile ←── AI03 LLM Gateway ───────────────────→ Huawei Qwen3.6
+/v1/learner/profile ←── AI03 LLM Gateway ───────────────────→ Workers AI
 /v1/progress/user   ←── AI04 Tutor (grounded Q&A)
 /v1/assessments/{id}←── AI06 Learning Paths
 /v1/courses/recommendations ←── AI07 Enhanced Recommendations
@@ -20,7 +20,7 @@ LMS (ALREADY BUILT)              AI Workers (TO BUILD)            LLM
 ```
 
 **All AI Workers read from LMS via `GET /api/v1/...` with `LMS_INTERNAL_KEY`.**
-**AI03 is the only Worker that calls Huawei. All others call AI03 via Service Binding.**
+**AI03 is the only Worker that calls Workers AI. All others call AI03 via Service Binding.**
 
 ---
 
@@ -46,7 +46,7 @@ Every slice includes its own instrumentation. No separate "add tracing later" st
 | 1 | AI03 | LLM Gateway | ~300 | 1 | LLM spans + budget metrics |
 | 2 | AI01 | Content Indexing | ~350 | 2 | Embedding spans + Vectorize traces |
 | 3 | AI02 | RAG Retrieval | ~150 | 2 | Retrieval spans (query, results, scores) |
-| 4 | AI04 | Tutor | ~300 | 3 | Full trace: LMS→Vectorize→Huawei→response |
+| 4 | AI04 | Tutor | ~300 | 3 | Full trace: LMS→Vectorize→Workers AI→response |
 | 5 | AI08 | Post-Quiz Insights | ~200 | 3 | Tone checks + review-link validity |
 | — | — | **Phoenix + first evals** | ~50 | 3-4 | Groundedness, relevance, tone scores |
 | 6 | AI06 | Learning Paths | ~300 | 4 | Path ordering validation spans |
@@ -109,22 +109,22 @@ export function recordLLMResult(span: Span, result: {
 
 - **Type:** AFK
 - **Week:** 1
-- **Depends on:** Huawei API key, LMS internal key
+- **Depends on:** LMS internal key
 
 ### What to build
 
-The single entry point for all LLM calls. Every AI Worker calls this — never Huawei directly.
+The single entry point for all LLM calls. Every AI Worker calls this — never Workers AI directly.
 
 ```
 POST /generate
   body: { messages, tier: "standard"|"quality", org_id }
-  response: { response, model_used, provider: "huawei", tokens_used }
+  response: { response, model_used, provider: "cloudflare", tokens_used }
 ```
 
 **Behavior:**
 1. Check org budget in D1 → reject if exhausted (429)
-2. Route to Huawei ModelArts: `qwen3.6-flash` (standard) or `qwen3.6-27b` (quality)
-3. If Huawei fails → fallback to Cloudflare Workers AI (Llama 3.2 / Mistral)
+2. Select model by tier: `@cf/meta/llama-3.2-3b-instruct` (standard) or `@cf/mistral/mistral-7b-instruct-v0.2` (quality)
+3. Call Workers AI via `env.AI.run()`
 4. Track token usage in D1
 5. Return standardized response
 
@@ -139,12 +139,12 @@ CREATE TABLE org_budgets (
 ```
 
 ### Acceptance criteria
-- [ ] `POST /generate` with valid org → routes to Huawei, returns AI response + token count
+- [ ] `POST /generate` with valid org → calls Workers AI, returns AI response + token count
 - [ ] Budget exhausted → returns 429 with message
-- [ ] Huawei unavailable → auto-fallback to Cloudflare Workers AI
+- [ ] Workers AI degraded → returns 502 with `ai_status: "degraded"`
 - [ ] Token tracking: 5 calls → D1 shows correct cumulative usage
 - [ ] `wrangler dev` works with Cloudflare Tunnel to LMS
-- [ ] **Observability:** Huawei `fetch()` spans auto-traced (latency, status) in CF Dashboard
+- [ ] **Observability:** Workers AI calls auto-traced (latency, status) in CF Dashboard
 - [ ] **Observability:** Manual LLM spans include model name, tier, tokens, org_id
 - [ ] **Observability:** Budget exhaustion → 429 visible in trace with `error: true`
 
@@ -254,7 +254,7 @@ POST /tutor/ask
 - [ ] Expand scope to module → wider retrieval, answer returned
 - [ ] Answer is grounded (prompt enforces "use ONLY provided content")
 - [ ] Integration: index lesson via AI01 → query via AI02 → ask via AI04 → get cited answer
-- [ ] **Observability:** Full trace shows: fetch LMS → Vectorize query → fetch Huawei → response
+- [ ] **Observability:** Full trace shows: fetch LMS → Vectorize query → Workers AI → response
 - [ ] **Observability:** LLM span includes prompt, response, model, tokens, latency
 - [ ] **Observability:** `scope_expansion` flag captured, citations count (`citations.count: N`)
 

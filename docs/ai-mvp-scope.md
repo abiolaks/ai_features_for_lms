@@ -30,7 +30,7 @@
 ┌─────────────────────────────────────────────────────────┐
 │                 AI Layer (MVP — TO BUILD)                 │
 │                                                          │
-│  ✅ AI03 LLM Gateway      ← 1 Worker, routes to Huawei  │
+│  ✅ AI03 LLM Gateway      ← 1 Worker, calls Workers AI  │
 │  ✅ AI01 Indexing         ← chunk + embed + index        │
 │  ✅ AI02 RAG Retrieval    ← vector search               │
 │  ✅ AI04a Tutor           ← grounded Q&A with citations  │
@@ -56,7 +56,7 @@
 
 | Worker | What it does | LMS endpoint used |
 |--------|-------------|-------------------|
-| **AI03** LLM Gateway | Routes to Huawei Qwen3.6. Budget tracking in D1. Fallback to CF Workers AI. | None (D1 for budget) |
+| **AI03** LLM Gateway | Calls Workers AI. Budget tracking in D1. | None (D1 for budget) |
 | **AI01a** Chunking | Reads lesson content, splits into ~512-token chunks | `GET /v1/lessons/{id}` |
 | **AI01b** Indexing | Embeds chunks (bge-m3), stores in Vectorize | `GET /v1/modules/{id}/lessons` |
 | **AI02** RAG Retrieval | Embeds query, searches Vectorize, returns relevant chunks | None (Vectorize only) |
@@ -83,7 +83,7 @@ Tutor:   "A list is mutable (can be modified after creation) while a tuple
 | 1 | Get lesson content for context | `GET /v1/lessons/{lessonId}` |
 | 2 | Embed question → search Vectorize | AI02 (Vectorize) |
 | 3 | Build grounded prompt with chunks | — |
-| 4 | Generate answer via AI03 | AI03 (Huawei Qwen3.6-flash) |
+| 4 | Generate answer via AI03 | AI03 (Workers AI Llama 3.2) |
 | 5 | Return answer + citations | — |
 
 **Why this is MVP:** The LMS stores content but can't answer questions about it. This is the #1 AI feature learners expect.
@@ -109,7 +109,7 @@ but missed 2/3 questions on error handling.
 | 2 | Get course progress for context | `GET /v1/progress/user` |
 | 3 | Get lesson structure for review links | `GET /v1/lessons/{lessonId}` |
 | 4 | Build insight prompt | — |
-| 5 | Generate via AI03 | AI03 (Huawei Qwen3.6-flash) |
+| 5 | Generate via AI03 | AI03 (Workers AI Llama 3.2) |
 
 **Why this is MVP:** All the data already exists in LMS. We just need to read it and generate text. Lowest-effort, high-impact feature.
 
@@ -138,7 +138,7 @@ AI:      "Based on your profile (Python beginner, 5-day streak,
 | 2 | Get course catalogue | `GET /v1/catalog` |
 | 3 | Get current progress | `GET /v1/progress/user` |
 | 4 | Get org skill gaps | `GET /v1/analytics/dashboard/skill-gaps` |
-| 5 | Generate path via AI03 | AI03 (Huawei Qwen3.6-flash) |
+| 5 | Generate path via AI03 | AI03 (Workers AI Llama 3.2) |
 
 **Why this is MVP:** LMS has catalogue + profile but can't generate personalized paths with reasons. The rich LMS data (gamification, streaks, skill gaps) makes the AI output better than any static path.
 
@@ -162,7 +162,7 @@ AI adds:          "This fits because you've mastered all prerequisites
 |------|--------|-------------|
 | 1 | Get LMS baseline recommendations | `GET /v1/courses/recommendations` |
 | 2 | Get learner profile + progress | `GET /v1/learner/profile`, `/v1/progress/user` |
-| 3 | Generate AI "why this fits" explanations | AI03 (Huawei Qwen3.6-flash) |
+| 3 | Generate AI "why this fits" explanations | AI03 (Workers AI Llama 3.2) |
 | 4 | Merge LMS recs with AI reasons | — |
 
 **Effort:** Low. LMS already does recommendations — we just add explanations.
@@ -200,8 +200,8 @@ AI adds:          "This fits because you've mastered all prerequisites
           │              │              │
           ▼              ▼              ▼
      ┌────────┐    ┌──────────┐   ┌──────────┐
-     │  LMS   │    │ Huawei   │   │ CF Infra │
-     │  API   │    │ Qwen3.6  │   │ Vectorize│
+     │  LMS   │    │ Workers AI │   │ CF Infra │
+     │  API   │    │ Llama/Mistral│  │ Vectorize│
      │ (data) │    │ (LLM)    │   │ D1, KV   │
      └────────┘    └──────────┘   └──────────┘
 ```
@@ -212,9 +212,9 @@ AI adds:          "This fits because you've mastered all prerequisites
 
 ```
 Week 1: AI03 LLM Gateway
-  ├── Worker: POST /generate → Huawei Qwen3.6
+  ├── Worker: POST /generate → Workers AI
   ├── D1: org budget table
-  ├── Fallback: CF Workers AI if Huawei down
+  ├── Error handling: graceful degradation on Workers AI failure
   └── Test: curl → get AI response with token count
 
 Week 2: Data Pipeline
@@ -241,7 +241,7 @@ Week 5: Enhanced Recs + Polish
 
 | Worker | LMS Endpoints | CF Infra | Secrets |
 |--------|--------------|----------|---------|
-| AI03 | None | D1 (budget) | `HUAWEI_API_KEY`, `HUAWEI_ENDPOINT` |
+| AI03 | None | D1 (budget) | None (uses env.AI.run) |
 | AI01a | `GET /v1/lessons/{id}` | — | `LMS_INTERNAL_KEY` |
 | AI01b | `GET /v1/modules/{id}/lessons` | Vectorize, R2 | `LMS_INTERNAL_KEY` |
 | AI02 | None | Vectorize | — |
@@ -260,7 +260,7 @@ Week 5: Enhanced Recs + Polish
 - [ ] **Recs Demo:** Get course recommendations with AI-generated "why this fits" explanations
 - [ ] **All features work with real LMS data** (not mock data)
 - [ ] **Dashboard** at `ai.lms.example.com` shows all features working
-- [ ] **Huawei fallback works:** Kill Huawei → features still respond via CF Workers AI
+- [ ] **Graceful degradation:** Workers AI degraded → features return ai_status:"degraded"
 - [ ] **Budget enforcement:** Exhaust org budget → 429 returned, not silent failure
 
 ---

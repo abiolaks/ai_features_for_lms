@@ -35,6 +35,9 @@ beforeAll(() => {
     upsert: vi.fn().mockResolvedValue(undefined),
     deleteByIds: vi.fn().mockResolvedValue(undefined),
   };
+
+  // Webhook secret for auth validation
+  (env as any).LMS_WEBHOOK_SECRET = "test-whsec";
 });
 
 // ──── Helpers ────
@@ -42,7 +45,10 @@ beforeAll(() => {
 function buildRequest(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Webhook-Secret': 'test-whsec',
+    },
     body: JSON.stringify(body),
   });
 }
@@ -66,6 +72,29 @@ describe('Validation', () => {
     expect(res.status).toBe(405);
   });
 
+  it('rejects missing X-Webhook-Secret', async () => {
+    const req = new Request('http://localhost/index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'publish', org_id: 'test', entity: { id: '1' } }),
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects wrong X-Webhook-Secret', async () => {
+    const req = new Request('http://localhost/index', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-Secret': 'wrong-secret',
+      },
+      body: JSON.stringify({ event: 'publish', org_id: 'test', entity: { id: '1' } }),
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(401);
+  });
+
   it('rejects unknown paths', async () => {
     const res = await callWorker('/unknown', { event: 'publish' });
     expect(res.status).toBe(404);
@@ -74,6 +103,9 @@ describe('Validation', () => {
   it('rejects invalid JSON', async () => {
     const req = new Request('http://localhost/index', {
       method: 'POST',
+      headers: {
+        'X-Webhook-Secret': 'test-whsec',
+      },
       body: 'not json',
     });
     const res = await worker.fetch(req, env);

@@ -38,13 +38,13 @@
          │                                │
          │ SQLite                         │ fetch (HTTPS)
          ▼                                ▼
-┌─────────────────┐          ┌───────────────────────────────┐
-│  SQLite DB       │          │  Huawei Cloud ModelArts        │
-│  (shared file)   │          │                                │
-│                  │          │  Qwen3.6-flash (standard tier) │
-│  courses         │          │  Qwen3.6-27b  (quality tier)   │
-│  learners        │          │                                │
-│  enrollments     │          └───────────────────────────────┘
+┌─────────────────┐
+│  SQLite DB       │
+│  (shared file)   │
+│                  │
+│  courses         │
+│  learners        │
+│  enrollments     │
 │  quizzes         │
 │  org_config      │
 └─────────────────┘
@@ -56,7 +56,7 @@
 |--------|---------|----------|----------------|
 | **LMS Platform** | FastAPI + SQLite | Local / Docker | Courses, accounts, progress, quizzes, gateway |
 | **AI Services** | Cloudflare Workers | Cloudflare Edge | Tutor, paths, recs, insights, assistant, assessments |
-| **LLM** | Huawei ModelArts | Huawei Cloud | Text generation (Qwen3.6) |
+| **LLM** | Workers AI | Cloudflare Edge | Text generation (Llama 3.2 / Mistral) |
 
 ---
 
@@ -109,12 +109,12 @@ LMS_GATEWAY_URL=https://lms-dev-xyz.trycloudflare.com wrangler dev
 ```
 NEEDS FROM LMS:
   GET https://{LMS_GATEWAY}/api/accounts/orgs/{org_id}/config
-  → { enabled_providers, provider_rules, budget_limit, budget_used }
+  → { budget_limit, budget_used }
 
-CALLS HUAWEI:
-  POST https://{HUAWEI_ENDPOINT}/v1/chat/completions
-  → Standard tier: qwen3.6-flash
-  → Quality tier:  qwen3.6-27b
+CALLS WORKERS AI:
+  env.AI.run(model, { messages, max_tokens })
+  → Standard tier: @cf/meta/llama-3.2-3b-instruct
+  → Quality tier:  @cf/mistral/mistral-7b-instruct-v0.2
 
 CALLED BY: All other AI Workers via Service Bindings
 ```
@@ -127,7 +127,7 @@ NEEDS FROM LMS:
 
 NEEDS FROM CF INFRA:
   Vectorize query     → RAG chunks (bge-m3 embedding → vector search)
-  AI03 Service Binding → LLM response (Huawei Qwen3.6 via Gateway Worker)
+  AI03 Service Binding → LLM response (Workers AI via Gateway Worker)
 
 EXPOSES TO FRONTEND:
   POST /tutor/ask
@@ -221,7 +221,7 @@ NEEDS FROM LMS:
 
 NEEDS FROM CF INFRA:
   Vectorize query         → RAG chunks from lesson
-  AI03 Service Binding     → LLM response (quality tier → Huawei Qwen3.6-27b)
+  AI03 Service Binding     → LLM response (quality tier → Mistral)
 
 EXPOSES TO FRONTEND:
   POST /assessments/generate
@@ -269,7 +269,7 @@ EXPOSES TO FRONTEND:
      headers: { "X-API-Key": env.LMS_INTERNAL_KEY }
    })
 4. LMS Gateway validates internal key → returns requested data
-5. AI Worker processes data, calls Huawei for LLM, returns result to frontend
+5. AI Worker processes data, calls Workers AI for LLM, returns result to frontend
 ```
 
 **Why two auth paths?**
@@ -302,22 +302,21 @@ const catalogue = await fetchFromLMS(
 
 ## Error Handling — Three-Layer Resilience
 
-| Scenario | Frontend → AI Worker | AI Worker → LMS | AI Worker → Huawei |
-|----------|----------------------|-----------------|---------------------|
+| Scenario | Frontend → AI Worker | AI Worker → LMS | AI Worker → Workers AI |
+|----------|----------------------|-----------------|------------------------|
 | Auth failure | Worker returns 401 | Gateway returns 401 | — |
-| Service down | Worker returns 503 | Worker catches, returns degraded (AI12) | AI03 falls back to Cloudflare Workers AI |
-| Timeout | Worker returns 504 after 30s | Worker catches, returns degraded | AI03 catches, falls back |
+| Service down | Worker returns 503 | Worker catches, returns degraded (AI12) | Gateway returns 502 |
+| Timeout | Worker returns 504 after 30s | Worker catches, returns degraded | Gateway catches, returns degraded |
 | Budget exhausted | — | — | AI03 returns 429, Worker surfaces to user |
 | No RAG results | Worker returns "not found" | — | — |
 
 **Fallback hierarchy (built into AI03 Gateway Worker):**
 
 ```
-1. Try Huawei Qwen3.6 (standard or quality tier)
-2. If Huawei fails → try Cloudflare Workers AI (Llama 3.2 / Mistral)
-3. If both fail → return 502 with degradation notice
+1. Call Workers AI (Llama 3.2 standard / Mistral quality)
+2. If Workers AI fails → return 502 with degradation notice
 
-Embeddings never fall back — Workers AI bge-m3 is always available on Cloudflare.
+Embeddings: Workers AI bge-m3 is always available on Cloudflare.
 ```
 
 ---
@@ -331,13 +330,8 @@ name = "ai-gateway"
 [vars]
 LMS_GATEWAY_URL = "https://lms-dev-xyz.trycloudflare.com"  # dev
 # LMS_GATEWAY_URL = "https://lms.example.com"              # prod
-HUAWEI_MODELARTS_ENDPOINT = "https://modelarts.huawei.com/v1"
-HUAWEI_STANDARD_MODEL = "qwen3.6-flash"
-HUAWEI_QUALITY_MODEL = "qwen3.6-27b"
-
 # Secrets (never in code)
 # npx wrangler secret put LMS_INTERNAL_KEY
-# npx wrangler secret put HUAWEI_API_KEY
 
 [[d1_databases]]
 binding = "DB"
@@ -381,10 +375,9 @@ Phase 1: Gateway + Tunnel (Day 1)
   └── Verify: AI Worker can fetch LMS catalogue via tunnel
 
 Phase 2: AI03 LLM Gateway Worker (Week 1)
-  ├── Worker: POST /generate with Huawei Qwen3.6
+  ├── Worker: POST /generate with Workers AI
   ├── Worker: Budget enforcement (D1)
-  ├── Worker: Fallback to Cloudflare Workers AI
-  └── Test: Call from curl, verify Huawei response + token tracking
+  └── Test: Call from curl, verify AI response + token tracking
 
 Phase 3: Data Pipeline (Week 2)
   ├── AI01 Chunking + Embedding: Workers AI bge-m3
@@ -432,7 +425,7 @@ Phase 7: Demo Dashboard (Continuous — every Phase adds cards)
 
 3. **AI Workers are stateless** (except Durable Objects for conversation history). All persistent data lives in D1 (SQLite on Cloudflare) or in the LMS SQLite database.
 
-4. **AI03 Gateway Worker is the only Worker that talks to Huawei.** No other Worker knows about Huawei ModelArts, API keys, or model names. Change providers by changing one Worker.
+4. **AI03 Gateway Worker is the only Worker that talks to Workers AI.** No other Worker calls `env.AI.run()` directly. Change models by changing one Worker.
 
 5. **No circular dependencies.** LMS platform knows nothing about AI Workers. AI Workers know about LMS endpoints but LMS never calls AI Workers.
 
@@ -444,9 +437,9 @@ Phase 7: Demo Dashboard (Continuous — every Phase adds cards)
    | SQLite (AI data) | D1 |
    | Local filesystem | R2 |
    | cachetools LRU | KV |
-   | Ollama (local LLM) | Huawei ModelArts (via AI03) |
+   | Ollama (local LLM) | Workers AI (via AI03) |
 
-7. **AI13 Demo Dashboard proves integration.** Each AI card added to the dashboard demonstrates the full chain: LMS data → AI Worker → Huawei LLM → rendered result. Built incrementally across all phases.
+7. **AI13 Demo Dashboard proves integration.** Each AI card added to the dashboard demonstrates the full chain: LMS data → AI Worker → Workers AI → rendered result. Built incrementally across all phases.
 
 ---
 
@@ -468,7 +461,6 @@ cloudflared tunnel --url http://localhost:8000
 # 4. Deploy AI03 Gateway Worker first
 cd workers/ai-gateway
 npx wrangler secret put LMS_INTERNAL_KEY
-npx wrangler secret put HUAWEI_API_KEY
 npx wrangler deploy
 
 # 5. Develop other Workers locally against deployed AI03

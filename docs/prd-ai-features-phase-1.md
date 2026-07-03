@@ -2,7 +2,7 @@
 
 **Status:** Ready for implementation  
 **Date:** 2026-06-10  
-**Architecture:** Cloudflare Workers + Huawei Qwen3.6  
+**Architecture:** Cloudflare Workers + Workers AI  
 **LMS Contract:** `api.json` (REST API on localhost:8000)
 
 ---
@@ -13,7 +13,7 @@ The LMS platform stores courses, lessons, learner profiles, progress, and quiz r
 
 ## Solution
 
-An AI layer of 7 Cloudflare Workers that read from the LMS API and generate what the LMS cannot: cited answers, coaching insights, personalized learning paths, and recommendation explanations. All powered by Huawei Qwen3.6, all running on Cloudflare's edge.
+An AI layer of 7 Cloudflare Workers that read from the LMS API and generate what the LMS cannot: cited answers, coaching insights, personalized learning paths, and recommendation explanations. All powered by Cloudflare Workers AI (Llama 3.2 / Mistral), all running on Cloudflare's edge.
 
 ## MVP Features (7 Workers)
 
@@ -36,14 +36,14 @@ Learner Browser
         │
         ├── AI Workers call LMS Gateway for data (X-API-Key: LMS_INTERNAL_KEY)
         │
-        └── AI03 Gateway Worker → Huawei ModelArts (Qwen3.6)
+        └── AI03 Gateway Worker → Workers AI (Llama 3.2 / Mistral)
               │
-              └── Fallback: Cloudflare Workers AI
+              └── No fallback needed — Workers AI runs on the same edge
 ```
 
 **Key decisions:**
 - LMS owns all data (courses, profiles, progress, quizzes). AI Workers **read only**.
-- AI03 is the only Worker that calls Huawei. All others call AI03 via Service Binding.
+- AI03 is the only Worker that calls Workers AI. All others call AI03 via Service Binding.
 - Embeddings use Cloudflare Workers AI `bge-m3`. No local models.
 - Vector storage is Cloudflare Vectorize. No LanceDB.
 - AI data (budgets, caches, conversations) stored in D1/KV/DO.
@@ -54,7 +54,7 @@ Learner Browser
 - [ ] **Insights:** Submit a quiz → AI generates personalized coaching insight with review links
 - [ ] **Paths:** Generate a learning path using real learner profile + real course catalogue
 - [ ] **Recs:** Get course recommendations with AI-generated "why this fits" explanations
-- [ ] **Gateway:** Huawei calls work, budget enforced, fallback to Cloudflare AI on failure
+- [ ] **Gateway:** Workers AI calls work, budget enforced
 - [ ] **Dashboard:** Live at deployed URL, all 7 cards work with real LMS data
 - [ ] **All features degrade gracefully** when AI is unavailable
 
@@ -90,10 +90,7 @@ Learner Browser
 | Dependency | Status | Owner |
 |-----------|--------|-------|
 | LMS REST API (api.json) | ✅ Built | LMS team |
-| Huawei ModelArts API key | ⚠️ Needed before Week 1 | Infra |
-| LMS internal API key | ⚠️ Needed before Week 1 | LMS team |
-| Cloudflare Workers account | ⚠️ Needed before Week 1 | Infra |
-| LMS Gateway reachable from CF | ⚠️ cloudflared tunnel setup | Dev |
+| LMS Gateway reachable from CF | ✅ cloudflared tunnel setup | Dev |
 | Vectorize index created | ⚠️ Needed before Week 2 | Infra |
 | D1 database created | ⚠️ Needed before Week 1 | Infra |
 
@@ -101,7 +98,7 @@ Learner Browser
 
 | Risk | Impact | Mitigation |
 |------|--------|------------|
-| Huawei API latency | Slow tutor responses (>500ms) | Fallback to CF Workers AI, streaming responses in post-MVP |
+| Workers AI latency spikes | Slow tutor responses (>500ms) | Streaming responses in post-MVP, KV caching |
 | LMS API changes break Workers | Broken AI features | Contract tests against api.json in CI |
 | Budget exhaustion during demo | 429 errors visible | Set high default cap, monitor in dashboard |
 | Vectorize cold start | Slow first retrieval | Pre-warm with seed queries after indexing |
@@ -116,7 +113,7 @@ Learner Browser
 | `docs/ai-lms-api-mapping.md` | Which LMS endpoints each Worker calls |
 | `docs/ai-lms-integration-plan.md` | Integration architecture |
 | `docs/ai-data-requirements-cloudflare.md` | What data AI layer stores |
-| `docs/ai-cloudflare-huawei-architecture.md` | Cloudflare + Huawei infra |
+| `docs/ai-cloudflare-architecture.md` | Cloudflare Workers AI infra |
 | `docs/vertical-slices-phase-1.md` | Detailed slice specs |
 | `Issues/ai/` | Individual issue files per slice |
 | `Issues/status.json` | Build progress tracker |

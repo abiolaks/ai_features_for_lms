@@ -2,19 +2,17 @@
 
 ## What the AI Gateway Does
 
-The Gateway is a Worker that sits between every AI feature and every LLM provider. Its full responsibilities:
+The Gateway is a Worker that sits between every AI feature and Workers AI. Its full responsibilities:
 
 | Responsibility | Detail |
 |---|---|
-| **Provider routing** | Huawei for Chinese, Cloudflare for English, based on `preferred_language` |
-| **Model selection** | `tier=standard` → Pangu-3.0 / Llama 3.2; `tier=quality` → Pangu-38B / Mistral |
+| **Model selection** | `tier=standard` → Llama 3.2; `tier=quality` → Mistral |
 | **Budget enforcement** | Per-org monthly token cap. Soft throttle at 80%, hard stop at 100%. Tracks in D1. |
-| **Fallback** | Huawei down → auto-fallback to Cloudflare AI |
-| **Tracing** | Every call traced: provider, model, latency, tokens, status, org |
+| **Tracing** | Every call traced: model, latency, tokens, status, org |
 | **Telemetry** | Metrics to Workers Analytics Engine + structured logs |
 | **Caching** | Prompt→response caching in KV (deduplicate identical requests) |
-| **Auth** | Validates org has `enabled_providers` including the requested provider |
-| **Normalization** | All providers return identical response shape regardless of backend |
+| **Normalization** | Consistent response shape for all AI Workers |
+| **Error handling** | Timeouts, budget exhaustion, degraded service signals |
 
 ---
 
@@ -24,8 +22,8 @@ The Gateway is a Worker that sits between every AI feature and every LLM provide
                           POST /generate
                                │
                     ┌──────────▼──────────┐
-                    │  1. Auth + Budget    │
-                    │     Check (D1)       │
+                    │  1. Budget Check    │
+                    │     (D1)            │
                     └──────────┬──────────┘
                                │
                     ┌──────────▼──────────┐
@@ -35,41 +33,36 @@ The Gateway is a Worker that sits between every AI feature and every LLM provide
                     └──────────┬──────────┘
                                │ Miss
                     ┌──────────▼──────────┐
-                    │  3. Select Provider │
-                    │     by language      │
+                    │  3. Select Model    │
+                    │     by tier          │
                     └──────────┬──────────┘
                                │
-              ┌────────────────┼────────────────┐
-              │                │                │
-     ┌────────▼───────┐ ┌─────▼──────┐ ┌──────▼────────┐
-     │ Cloudflare     │ │ Huawei     │ │ N-ATLaS       │
-     │ env.AI.run()   │ │ fetch()    │ │ fetch()        │
-     │ (internal)     │ │ (outbound) │ │ (Phase 2)      │
-     └────────┬───────┘ └─────┬──────┘ └──────┬────────┘
-              │                │                │
-              └────────────────┼────────────────┘
+                    ┌──────────▼──────────┐
+                    │  4. Workers AI      │
+                    │     env.AI.run()    │
+                    │     (internal)      │
+                    └──────────┬──────────┘
                                │
                     ┌──────────▼──────────┐
-                    │  4. Cache Store     │
+                    │  5. Cache Store     │
                     │     (KV put, TTL)   │
                     └──────────┬──────────┘
                                │
                     ┌──────────▼──────────┐
-                    │  5. Emit Telemetry  │
+                    │  6. Emit Telemetry  │
                     │     Analytics Engine │
                     │     + structured log │
                     └──────────┬──────────┘
                                │
                     ┌──────────▼──────────┐
-                    │  6. Track Tokens    │
+                    │  7. Track Tokens    │
                     │     (D1 UPDATE)     │
                     └──────────┬──────────┘
                                │
                     ┌──────────▼──────────┐
-                    │  7. Return Response │
+                    │  8. Return Response │
                     │  { response,         │
                     │    model_used,       │
-                    │    provider,         │
                     │    tokens_used,      │
                     │    latency_ms }      │
                     └─────────────────────┘
@@ -94,17 +87,15 @@ dataset = "ai_gateway_metrics"
 // lib/telemetry.ts
 
 interface CallTelemetry {
-  provider: 'cloudflare' | 'huawei' | 'natlas';
   model: string;
   tier: 'standard' | 'quality';
   org_id: string;
   feature: string;          // 'tutor', 'paths', 'insights', etc.
-  language: string;          // 'en', 'zh', 'ha', etc.
   latency_ms: number;
   tokens_in: number;
   tokens_out: number;
   tokens_total: number;
-  status: 'success' | 'fallback' | 'error' | 'budget_exhausted';
+  status: 'success' | 'error' | 'budget_exhausted';
   cached: boolean;
   error_message?: string;
 }
@@ -112,12 +103,10 @@ interface CallTelemetry {
 export function emitTelemetry(env: Env, t: CallTelemetry): void {
   env.ANALYTICS.writeDataPoint({
     blobs: [
-      t.provider,
       t.model,
       t.tier,
       t.org_id,
       t.feature,
-      t.language,
       t.status,
       t.error_message || '',
     ],
@@ -128,7 +117,7 @@ export function emitTelemetry(env: Env, t: CallTelemetry): void {
       t.tokens_total,
       t.cached ? 1 : 0,
     ],
-    indexes: [t.provider],
+    indexes: [t.model],
   });
 }
 ```
@@ -142,7 +131,6 @@ export default {
     const startTime = Date.now();
 
     let status: CallTelemetry['status'] = 'success';
-    let provider: string;
     let model: string;
     let tokensTotal = 0;
 
@@ -152,12 +140,10 @@ export default {
       if (budget.exhausted) {
         status = 'budget_exhausted';
         emitTelemetry(env, {
-          provider: 'none',
           model: 'none',
           tier: body.tier,
           org_id: body.org_id,
           feature: body.feature || 'unknown',
-          language: body.preferred_language || 'en',
           latency_ms: Date.now() - startTime,
           tokens_in: 0,
           tokens_out: 0,
@@ -182,43 +168,24 @@ export default {
         return Response.json(parsed.response);
       }
 
-      // Select provider
-      provider = selectProvider(body.preferred_language || 'en');
-      model = selectModel(provider, body.tier);
+      // Select model by tier
+      model = selectModel(body.tier);
 
-      // Call provider
-      let result: CallResult;
-      try {
-        result = provider === 'huawei'
-          ? await callHuawei(body, env)
-          : await callCloudflareAI(body, env);
-      } catch (err) {
-        if (provider === 'huawei') {
-          // Fallback to Cloudflare
-          provider = 'cloudflare';
-          model = selectModel('cloudflare', body.tier);
-          result = await callCloudflareAI(body, env);
-          status = 'fallback';
-        } else {
-          status = 'error';
-          throw err;
-        }
-      }
+      // Call Workers AI
+      const result = await callWorkersAI(body, model, env);
 
       // Cache store
       const responsePayload = {
         response: result.response,
         model_used: model,
-        provider,
         tokens_used: result.tokens_used,
         throttle_warning: false,
       };
       await env.CACHE.put(cacheKey, JSON.stringify({
         response: responsePayload,
         telemetry: {
-          provider, model, tier: body.tier,
+          model, tier: body.tier,
           org_id: body.org_id, feature: body.feature || 'unknown',
-          language: body.preferred_language || 'en',
           tokens_in: countTokens(body.messages),
           tokens_out: result.tokens_used,
           tokens_total: result.tokens_used,
@@ -231,12 +198,10 @@ export default {
       // Emit telemetry
       const latencyMs = Date.now() - startTime;
       emitTelemetry(env, {
-        provider,
         model,
         tier: body.tier,
         org_id: body.org_id,
         feature: body.feature || 'unknown',
-        language: body.preferred_language || 'en',
         latency_ms: latencyMs,
         tokens_in: countTokens(body.messages),
         tokens_out: result.tokens_used,
@@ -248,7 +213,6 @@ export default {
       // Structured log (for debugging)
       console.log(JSON.stringify({
         event: 'llm_call',
-        provider,
         model,
         tier: body.tier,
         org_id: body.org_id,
@@ -266,12 +230,10 @@ export default {
 
     } catch (err: any) {
       emitTelemetry(env, {
-        provider: provider || 'unknown',
         model: model || 'unknown',
         tier: body.tier,
         org_id: body.org_id,
         feature: body.feature || 'unknown',
-        language: body.preferred_language || 'en',
         latency_ms: Date.now() - startTime,
         tokens_in: 0,
         tokens_out: 0,
@@ -289,67 +251,85 @@ export default {
     }
   }
 };
+
+// ──── Workers AI Call ────
+async function callWorkersAI(
+  body: GenerateRequest,
+  model: string,
+  env: Env
+): Promise<{ response: string; tokens_used: number }> {
+  const result = await env.AI.run(model, {
+    messages: body.messages,
+    max_tokens: body.tier === 'quality' ? 2048 : 1024,
+  });
+
+  return {
+    response: result.response,
+    tokens_used: result.usage.total_tokens,
+  };
+}
+
+// ──── Model Selection ────
+function selectModel(tier: 'standard' | 'quality'): string {
+  return tier === 'quality'
+    ? '@cf/mistral/mistral-7b-instruct-v0.2'
+    : '@cf/meta/llama-3.2-3b-instruct';
+}
 ```
 
 ---
 
 ## What Telemetry Gives You
 
-### Query 1: Provider Usage Split
+### Query 1: Model Usage Split
 
 ```sql
 -- Workers Analytics Engine (SQL-like)
 SELECT 
-  provider,
+  model,
   count() as calls,
   sum(tokens_total) as total_tokens,
   avg(latency_ms) as avg_latency
 FROM ai_gateway_metrics
 WHERE timestamp > now() - interval '24 hours'
-GROUP BY provider
+GROUP BY model
 ```
 
-### Query 2: Error Rate by Provider
+### Query 2: Error Rate
 
 ```sql
 SELECT 
-  provider,
+  model,
   countif(status = 'error') as errors,
-  countif(status = 'fallback') as fallbacks,
   count() as total,
   (countif(status = 'error') * 100.0 / count()) as error_pct
 FROM ai_gateway_metrics
 WHERE timestamp > now() - interval '1 hour'
-GROUP BY provider
+GROUP BY model
 ```
 
-### Query 3: Per-Feature Cost
+### Query 3: Per-Feature Token Usage
 
 ```sql
 SELECT 
   feature,
-  provider,
-  sum(tokens_total) as tokens,
-  sum(tokens_total) * 
-    CASE WHEN provider = 'huawei' THEN 0.000002  -- $2/M tokens
-         ELSE 0.000000  -- free tier
-    END as estimated_cost
+  model,
+  sum(tokens_total) as tokens
 FROM ai_gateway_metrics
 WHERE timestamp > now() - interval '30 days'
-GROUP BY feature, provider
+GROUP BY feature, model
 ```
 
-### Query 4: Huawei Availability
+### Query 4: Availability Over Time
 
 ```sql
 SELECT 
   date_trunc('hour', timestamp) as hour,
   countif(status = 'success') as success,
-  countif(status = 'fallback') as fallback,
-  countif(status = 'error') as error
+  countif(status = 'error') as error,
+  countif(status = 'budget_exhausted') as budget_exhausted
 FROM ai_gateway_metrics
-WHERE provider = 'huawei'
-  AND timestamp > now() - interval '7 days'
+WHERE timestamp > now() - interval '7 days'
 GROUP BY hour
 ORDER BY hour
 ```
@@ -363,17 +343,12 @@ ORDER BY hour
 ```typescript
 // lib/health-dashboard.ts
 export async function getHealthSnapshot(env: Env) {
-  // Last 5 minutes stats from Analytics Engine
-  // (sampled — Analytics Engine is eventually consistent)
-  
-  // Fallback: live health check via KV
-  const huaweiHealth = await env.CACHE.get('health:huawei');
-  const cloudflareHealth = await env.CACHE.get('health:cloudflare');
+  // Live health check via KV
+  const aiHealth = await env.CACHE.get('health:workers-ai');
 
   return {
     providers: {
-      cloudflare: { status: cloudflareHealth || 'unknown' },
-      huawei: { status: huaweiHealth || 'unknown' },
+      'workers-ai': { status: aiHealth || 'unknown' },
     },
     last_5_minutes: {
       total_calls: await queryAnalytics('count()', '5m'),
@@ -396,14 +371,9 @@ crons = ["*/30 * * * *"]
 // health-check worker (scheduled)
 export default {
   async scheduled(controller: ScheduledController, env: Env) {
-    // Probe Huawei
-    const huaweiOk = await probeHuawei(env);
-    await env.CACHE.put('health:huawei', huaweiOk ? 'available' : 'degraded', 
-      { expirationTtl: 60 });
-
-    // Probe Cloudflare AI
-    const cfOk = await probeCloudflare(env);
-    await env.CACHE.put('health:cloudflare', cfOk ? 'available' : 'degraded',
+    // Probe Workers AI
+    const aiOk = await probeWorkersAI(env);
+    await env.CACHE.put('health:workers-ai', aiOk ? 'available' : 'degraded', 
       { expirationTtl: 60 });
   }
 };
@@ -416,20 +386,18 @@ export default {
 ### Pre-Launch
 
 - [ ] **Mock mode:** Gateway works with `LLM_PROVIDER=mock` — echoes prompts, returns synthetic tokens
-- [ ] **Provider routing:** Chinese query → Huawei. English query → Cloudflare. Verified in logs.
+- [ ] **Model selection:** tier=standard → Llama 3.2. tier=quality → Mistral. Verified in logs.
 - [ ] **Budget enforcement:** 80% → throttle warning in response. 100% → 429 with admin message.
-- [ ] **Fallback:** Kill Huawei endpoint → Gateway auto-falls-back to Cloudflare. Response still works.
 - [ ] **Cache:** Identical prompts within TTL → KV cache hit. Second call <5ms (vs ~200ms).
 - [ ] **Telemetry:** Every call emits an Analytics Engine data point. Queryable within 60 seconds.
-- [ ] **Token counting:** Accurate for both providers. D1 `tokens_used_this_period` incrementing correctly.
-- [ ] **Timeout:** Huawei hangs → Gateway returns 502 after 30s, doesn't crash the Worker.
+- [ ] **Token counting:** Accurate. D1 `tokens_used_this_period` incrementing correctly.
+- [ ] **Timeout:** Workers AI hangs → Gateway returns 502 after 30s, doesn't crash the Worker.
 
 ### Post-Launch Monitoring
 
-- [ ] **Huawei latency P50/P95:** Tracked via Analytics Engine dashboard
-- [ ] **Fallback rate:** Alerts if >5% of Huawei calls fall back to Cloudflare
+- [ ] **Latency P50/P95:** Tracked via Analytics Engine dashboard
+- [ ] **Error rate:** Alerts if >5% of calls fail
 - [ ] **Budget alerts:** Org approaching 80% cap triggers notification
-- [ ] **Cost tracking:** Estimated spend per provider per day
 - [ ] **Token burn rate:** Overall platform tokens/day vs monthly caps
 
 ### Integration Tests
@@ -437,51 +405,30 @@ export default {
 ```typescript
 // tests/ai-gateway.test.ts
 describe('AI03 Gateway', () => {
-  it('routes Chinese to Huawei', async () => {
-    const res = await gateway.fetch('/generate', {
-      method: 'POST',
-      body: JSON.stringify({
-        messages: [{ role: 'user', content: '什么是机器学习?' }],
-        tier: 'standard',
-        org_id: 'org-1',
-        preferred_language: 'zh',
-      })
-    });
-    const data = await res.json();
-    expect(data.provider).toBe('huawei');
-    expect(data.model_used).toContain('pangu');
-  });
-
-  it('routes English to Cloudflare', async () => {
+  it('selects Llama 3.2 for standard tier', async () => {
     const res = await gateway.fetch('/generate', {
       method: 'POST',
       body: JSON.stringify({
         messages: [{ role: 'user', content: 'What is ML?' }],
         tier: 'standard',
         org_id: 'org-1',
-        preferred_language: 'en',
       })
     });
     const data = await res.json();
-    expect(data.provider).toBe('cloudflare');
     expect(data.model_used).toContain('llama');
   });
 
-  it('falls back to Cloudflare when Huawei is down', async () => {
-    // Mock Huawei endpoint to return 500
-    env.HUAWEI_MODELARTS_ENDPOINT = 'http://localhost:9999/broken';
-
+  it('selects Mistral for quality tier', async () => {
     const res = await gateway.fetch('/generate', {
       method: 'POST',
       body: JSON.stringify({
-        messages: [{ role: 'user', content: '什么是机器学习?' }],
-        tier: 'standard',
+        messages: [{ role: 'user', content: 'Generate 10 quiz questions about ML.' }],
+        tier: 'quality',
         org_id: 'org-1',
-        preferred_language: 'zh',
       })
     });
     const data = await res.json();
-    expect(data.provider).toBe('cloudflare');  // Fell back
+    expect(data.model_used).toContain('mistral');
   });
 
   it('rejects when budget exhausted', async () => {
@@ -526,18 +473,17 @@ describe('AI03 Gateway', () => {
 
 | | Cloudflare AI Gateway | Your AI03 Gateway Worker |
 |---|---|---|
-| **What it covers** | Only Workers AI calls (`env.AI.run()`) | **All** LLM calls — Cloudflare + Huawei + N-ATLaS |
+| **What it covers** | Only Workers AI calls (`env.AI.run()`) | Workers AI calls through the Gateway |
 | **Caching** | Automatic prompt caching | Custom KV-based cache |
 | **Rate limiting** | Automatic per-model | Custom per-org budget in D1 |
 | **Analytics** | Built-in dashboard | Custom via Analytics Engine |
-| **Fallback** | Not supported | Automatic Huawei → Cloudflare |
-| **Provider abstraction** | None (only Workers AI) | Cloudflare / Huawei / N-ATLaS transparent to callers |
+| **Provider abstraction** | None (only Workers AI) | Single entry point for all AI Workers |
+| **Error handling** | Basic | Graceful degradation, budget exhaustion signals |
 
-They don't replace each other — they **stack**. Cloudflare AI Gateway handles Workers AI calls automatically. Your Gateway Worker sits on top, adding multi-provider routing, budget, and fallback.
+They don't replace each other — they **stack**. Cloudflare AI Gateway handles Workers AI calls automatically. Your Gateway Worker sits on top, adding model selection, budget enforcement, caching, and per-org tracking.
 
 ```
 AI Workers → Your Gateway Worker → Cloudflare AI Gateway → Workers AI Llama/Mistral
-                                 → fetch() → Huawei ModelArts → Pangu
 ```
 
-Cloudflare AI Gateway gives you free caching and analytics for the Workers AI leg. Your Gateway Worker gives you the multi-provider abstraction, budget, and Huawei fallback.
+Cloudflare AI Gateway gives you free caching and analytics. Your Gateway Worker gives you the abstraction layer, budget enforcement, and centralized token tracking.

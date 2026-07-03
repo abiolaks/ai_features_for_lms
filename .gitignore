@@ -2,9 +2,11 @@
 __pycache__/
 *.py[codz]
 *$py.class
-
+.vscode/
 # C extensions
 *.so
+_scripts/
+.agents/
 
 # Distribution / packaging
 .Python
@@ -223,3 +225,4 @@ node_modules/
 .wrangler/
 worker-configuration.d.ts
 *.tsbuildinfo
+_scripts/

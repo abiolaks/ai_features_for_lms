@@ -326,7 +326,7 @@ WRITE: KV                              → health status (30s TTL)
 | **Vectorize** + bge-m3 index | RAG retrieval needs embedded chunks |
 | **D1** (`org_budgets`) | AI03 needs budget tracking |
 | **KV** | Recommendation cache, health checks |
-| **AI03 Gateway Worker** | Routes to Huawei Qwen3.6, enforces budget |
+| **AI03 Gateway Worker** | Calls Workers AI, enforces budget |
 
 ### What we can defer to Post-MVP
 

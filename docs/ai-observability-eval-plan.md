@@ -10,7 +10,7 @@
 Cloudflare Workers (auto-instrumented)
   │
   ├──→ Workers Traces (free, automatic)
-  │      fetch to LMS, fetch to Huawei, KV, D1, Vectorize, DO
+  │      fetch to LMS, KV, D1, Vectorize, DO
   │      → Cloudflare Dashboard: latency, errors, request flows
   │
   ├──→ Custom LLM spans (manual OTel)
@@ -40,14 +40,13 @@ head_sampling_rate = 1.0    # 100% during dev, 5% in prod
 | Span | Shows | AI Feature Impact |
 |------|-------|-------------------|
 | `fetch` to LMS | Latency, status code, URL path | Measure LMS API performance per Worker |
-| `fetch` to Huawei | Latency, status code, URL | Measure LLM response time |
 | KV `get`/`put` | Latency, key pattern, cache hit/miss | Measure recommendation cache performance |
 | D1 `query` | SQL text, rows read/written, duration | Measure budget queries, assessment storage |
 | Vectorize `query` | Query text, result count | Measure RAG retrieval latency |
 | DO operations | KV get/put/delete, SQL exec | Measure conversation history performance |
 | Worker invocation | CPU time, wall time, outcome | Overall Worker health |
 
-**Dashboard view:** One trace shows: `POST /tutor/ask → fetch LMS lesson → Vectorize query → fetch Huawei → response`
+**Dashboard view:** One trace shows: `POST /tutor/ask → fetch LMS lesson → Vectorize query → Workers AI → response`
 
 ---
 
@@ -64,8 +63,8 @@ const tracer = trace.getTracer('ai-tutor');
 async function generateAnswer(messages: Message[], tier: string, orgId: string) {
   return tracer.startActiveSpan('llm.generate', async (span) => {
     span.setAttributes({
-      'llm.provider': 'huawei',
-      'llm.model': tier === 'quality' ? 'qwen3.6-27b' : 'qwen3.6-flash',
+      'llm.provider': 'cloudflare',
+      'llm.model': tier === 'quality' ? '@cf/mistral/mistral-7b-instruct-v0.2' : '@cf/meta/llama-3.2-3b-instruct',
       'llm.input_messages': JSON.stringify(messages),
       'llm.invocation_parameters': JSON.stringify({ tier, temperature: 0.7 }),
       'org.id': orgId,
@@ -154,7 +153,7 @@ spans = client.get_spans(
 )
 
 # Run groundedness eval: does the answer match the retrieved chunks?
-hallucination_eval = HallucinationEvaluator(model="qwen3.6-flash")
+hallucination_eval = HallucinationEvaluator(model="llama-3.2-3b")
 hallucination_scores = llm_classify(
     dataframe=spans,
     template=hallucination_eval,
@@ -162,7 +161,7 @@ hallucination_scores = llm_classify(
 )
 
 # Run relevance eval: does the answer address the question?
-relevance_eval = RelevanceEvaluator(model="qwen3.6-flash")
+relevance_eval = RelevanceEvaluator(model="llama-3.2-3b")
 relevance_scores = llm_classify(
     dataframe=spans,
     template=relevance_eval,
@@ -187,7 +186,7 @@ px.log_evaluations(
 | **Groundedness** | ≥90% answers grounded in source | Phoenix eval (HallucinationEvaluator) | <80% for 2 consecutive days |
 | **Answer relevance** | ≥85% answers address the question | Phoenix eval (RelevanceEvaluator) | <75% |
 | **"Not found" accuracy** | ≥95% — doesn't fabricate when no content | Manual spot-check or eval | <90% |
-| **Response latency** | P95 < 2 seconds | Workers traces (fetch to Huawei + Vectorize) | P95 > 3s |
+| **Response latency** | P95 < 2 seconds | Workers traces (Workers AI + Vectorize) | P95 > 3s |
 | **Scope expansion rate** | % of queries that trigger scope expansion | Custom metric in Worker | >50% (too many narrow misses) |
 | **Citation accuracy** | ≥90% citations point to correct section | Manual eval | <85% |
 
@@ -223,11 +222,11 @@ px.log_evaluations(
 
 | KPI | Target | How Measured | Alert If |
 |-----|--------|-------------|----------|
-| **Huawei availability** | ≥99% | Health check (AI12) | <95% |
+| **Workers AI availability** | ≥99% | Health check (AI12) | <95% |
 | **Fallback rate** | <5% of requests fall back to CF AI | Custom metric | >10% |
 | **Budget enforcement** | 100% — returns 429 when exhausted | Integration test | Any silent overage |
 | **Token tracking accuracy** | 100% — D1 matches actual usage | Reconciliation test | >1% drift |
-| **Response latency** | P95 < 1 second (Huawei) | Workers traces | P95 > 2s |
+| **Response latency** | P95 < 1 second (Workers AI) | Workers traces | P95 > 2s |
 
 ### AI01/02 — Indexing + RAG
 
@@ -326,7 +325,7 @@ python evals/run_evals.py
 Show live metrics in the demo dashboard:
 - Tutor: groundedness score (last 24h), avg latency
 - Insights: toxicity score (always green)
-- Gateway: budget usage %, Huawei availability
+- Gateway: budget usage %, Workers AI availability
 
 ---
 
@@ -337,7 +336,7 @@ Show live metrics in the demo dashboard:
 | 🔴 Critical | Tutor groundedness < 70% | Rollback prompt, investigate RAG |
 | 🔴 Critical | Any toxicity detected in Insights | Immediate rollback |
 | 🔴 Critical | Budget overage (tokens > cap, no 429) | Fix budget enforcement |
-| 🟡 Warning | P95 latency > 3s (any feature) | Check Huawei health, consider CF fallback |
-| 🟡 Warning | Fallback rate > 10% | Investigate Huawei stability |
+| 🟡 Warning | P95 latency > 3s (any feature) | Check Workers AI health |
+| 🟡 Warning | Error rate > 5% | Investigate Workers AI stability |
 | 🟡 Warning | Cache hit rate < 40% | Tune cache TTL or key strategy |
 | 🟢 Info | Scope expansion rate > 50% | Consider improving chunking or retrieval |

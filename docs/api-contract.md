@@ -8,6 +8,7 @@
 |---------|------------|------------|
 | Content Indexing | `https://ai-indexing.yomi-alarape.workers.dev` | `https://ai-indexing.lms.example.com` |
 | AI Tutor | `https://ai-tutor.yomi-alarape.workers.dev` | `https://ai-tutor.lms.example.com` |
+| Learning Paths | `https://ai-paths.yomi-alarape.workers.dev` | `https://ai-paths.lms.example.com` |
 | LLM Gateway | Internal only — not called directly | Internal only |
 
 ---
@@ -215,6 +216,102 @@ Retry after a few seconds. This means the LLM service had a transient failure.
 
 ---
 
+## 4. Generate Learning Path
+
+Call this when a learner visits their learning path or dashboard. Returns an AI-personalized, ordered list of courses based on their profile, progress, and available catalogue.
+
+```
+POST {base}/paths/generate
+Content-Type: application/json
+```
+
+### Request
+
+```json
+{
+  "learner_id": "l1",
+  "org_id": "org-wragby"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `learner_id` | string | Yes | LMS learner ID |
+| `org_id` | string | Yes | Tenant identifier |
+
+> ⚠️ **Stub mode only:** Until the LMS APIs are live, you can pass data inline:
+> `profile`, `catalogue`, and `progress` fields. See `Issues/ai/AI06-learning-paths.md` for details.
+
+### Response (200 — path generated)
+
+```json
+{
+  "path": [
+    {
+      "course_title": "Data Science Fundamentals",
+      "order": 1,
+      "why_this_fits": "Bridges your Python and SQL skills to ML concepts."
+    },
+    {
+      "course_title": "Machine Learning 101",
+      "order": 2,
+      "why_this_fits": "Directly aligned with your goal of becoming an ML engineer."
+    }
+  ],
+  "ai_status": "generated"
+}
+```
+
+| Field | Notes |
+|-------|-------|
+| `path[].course_title` | Course name from the catalogue |
+| `path[].order` | Position in path (1-based, prerequisites first) |
+| `path[].why_this_fits` | One-sentence AI explanation of why this course fits the learner |
+| `ai_status` | `"generated"` — AI-produced path, `"insufficient_data"` — no profile/goals, `"degraded"` — LLM unavailable |
+
+### Response (200 — insufficient data)
+
+```json
+{
+  "path": [
+    {
+      "course_title": "Python Basics",
+      "order": 1,
+      "why_this_fits": "Add skills and goals to get personalized recommendations."
+    }
+  ],
+  "ai_status": "insufficient_data"
+}
+```
+
+Returned when the learner has no profile, skills, or goals set. Shows the full catalogue as a browse view. Prompt the learner to fill in their profile for better results.
+
+### Response (200 — degraded)
+
+```json
+{
+  "path": [
+    {
+      "course_title": "Python Basics",
+      "order": 1,
+      "why_this_fits": ""
+    }
+  ],
+  "ai_status": "degraded"
+}
+```
+
+Returned when the LLM is unavailable. Shows catalogue order without AI explanations. `why_this_fits` will be empty.
+
+### Response (400)
+
+```json
+{ "error": "missing_field: learner_id" }
+{ "error": "missing_field: org_id" }
+```
+
+---
+
 ## Scope Expansion Flow
 
 The recommended frontend behavior:
@@ -251,9 +348,12 @@ The recommended frontend behavior:
 
 ## Integration Checklist
 
-- [ ] Lesson publish → call `POST /index`
+- [ ] Lesson publish → call `POST /index` with `X-Webhook-Secret` header
 - [ ] Lesson update → call `POST /index` again (re-indexes)
 - [ ] Lesson delete → call `POST /deindex`
 - [ ] Learner asks question → call `POST /tutor/ask` with `lesson_id`
+- [ ] Learner views dashboard → call `POST /paths/generate` with `learner_id` + `org_id`
 - [ ] Handle `scope_expansion_suggested: true` → offer wider search to learner
+- [ ] Handle `ai_status: "insufficient_data"` → prompt learner to fill in profile
+- [ ] Handle `ai_status: "degraded"` → show catalogue without AI explanations
 - [ ] Handle errors — 4xx is your fault, 5xx is retryable

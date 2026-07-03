@@ -196,7 +196,7 @@ Given what the LMS already provides, each AI Worker's job narrows:
 |--------|--------------|----------------------|-------------------|
 | **AI01a/b** Chunking/Indexing | Full pipeline | Stores lesson content | **Read** lessons → chunk → embed → index |
 | **AI02** RAG Retrieval | Vector search | — | **Query** Vectorize with org scoping |
-| **AI03** LLM Gateway | Provider routing | — | **Route** to Huawei Qwen3.6, enforce budget |
+| **AI03** LLM Gateway | Model selection | — | **Call** Workers AI, enforce budget |
 | **AI05** Learner Profile | Build profile service | Has full profile with gamification | **DELETE** — enrich LMS profile with AI signals instead |
 | **AI04a** Tutor | Grounded Q&A | Stores lesson content | **Read** lessons + RAG → generate cited answers |
 | **AI06** Learning Paths | Generate paths from profile | Has catalogue, progress, skill gaps, gamification | **Generate** AI-personalized paths using richer context |
@@ -282,7 +282,7 @@ The LMS response format is consistent: `{ success: boolean, data: ..., message: 
 AI01a  → GET /v1/lessons/{id}           (content to chunk)
 AI01b  → GET /v1/modules/{id}/lessons   (batch content to index)
 AI02   → (calls Vectorize, no LMS calls)
-AI03   → (calls Huawei, no LMS calls [budget stored in D1])
+AI03   → (calls Workers AI, no LMS calls [budget stored in D1])
 
 AI04a  → GET /v1/lessons/{id}           (content for RAG context)
           POST /internal/generate        (AI03: LLM response)

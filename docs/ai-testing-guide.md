@@ -6,12 +6,12 @@
 
 ## Testing Philosophy
 
-**No mocks for LMS data.** Workers must be tested against the real LMS API (via Cloudflare Tunnel). The only acceptable mocks are for things you physically can't run locally: Huawei ModelArts (mock with recorded responses) and Workers AI embeddings (mock with known vectors).
+**No mocks for LMS data.** Workers must be tested against the real LMS API (via Cloudflare Tunnel). The only acceptable mock is Workers AI embeddings (mock with known vectors).
 
 ```
 ✅ Test against real LMS      — actual api.json endpoints via tunnel
 ✅ Test against real CF infra  — Vectorize, D1, KV (wrangler dev)
-⚠️ Mock Huawei LLM             — recorded responses for deterministic tests
+⚠️ Mock Workers AI LLM           — recorded responses for deterministic tests
 ⚠️ Mock bge-m3 embeddings      — known vectors for reproducible retrieval
 ❌ Never mock LMS data          — defeats the purpose of integration
 ```
@@ -30,11 +30,11 @@
    - 5 calls → D1 shows cumulative tokens
 
 2. Provider routing
-   - tier=standard → calls qwen3.6-flash
-   - tier=quality → calls qwen3.6-27b
+   - tier=standard → calls Llama 3.2
+   - tier=quality → calls Mistral
 
 3. Fallback
-   - Mock Huawei as down → Worker falls back to CF Workers AI
+   - Mock Workers AI as down → Worker returns 502 with degraded status
    - Response still returns valid { response, tokens_used }
 ```
 
@@ -49,13 +49,13 @@ npx wrangler dev
 curl -X POST http://localhost:8787/generate \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Say hello"}],"tier":"standard","org_id":"test-org"}'
-# Expect: { response: "Hello!", model_used: "qwen3.6-flash", tokens_used: 10 }
+# Expect: { response: "Hello!", model_used: "@cf/meta/llama-3.2-3b-instruct", tokens_used: 10 }
 
 # Test 2: Quality tier
 curl -X POST http://localhost:8787/generate \
   -H "Content-Type: application/json" \
   -d '{"messages":[{"role":"user","content":"Explain quantum computing"}],"tier":"quality","org_id":"test-org"}'
-# Expect: model_used: "qwen3.6-27b"
+# Expect: model_used: "@cf/mistral/mistral-7b-instruct-v0.2"
 
 # Test 3: Budget exhaustion (after setting cap to 50 tokens in D1)
 # Expect: 429 { error: "budget_exhausted" }
@@ -83,8 +83,8 @@ describe('AI03 LLM Gateway', () => {
     expect(body.error).toBe('budget_exhausted');
   });
 
-  it('falls back to CF AI when Huawei fails', async () => {
-    // Mock fetch to Huawei as failing
+  it('returns degraded when Workers AI fails', async () => {
+    // Mock Workers AI as failing
     vi.spyOn(globalThis, 'fetch').mockRejectedValueOnce(new Error('Connection refused'));
 
     const res = await worker.fetch(/* ... */);
@@ -459,7 +459,7 @@ npx vitest run
 
 # 6. Check traces
 # Open Cloudflare Dashboard → Workers → your-worker → Observability
-# Verify: fetch to LMS, fetch to Huawei, custom LLM spans all visible
+# Verify: fetch to LMS, Workers AI, custom LLM spans all visible
 
 # 7. When ready, open PR
 # PR checklist:
