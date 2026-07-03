@@ -140,7 +140,7 @@ Header: X-API-Key: <LMS_INTERNAL_KEY>
 | `gamification.login_streak` | AI06 | Motivation-aware suggestions |
 | `gamification.total_points` | AI06, AI07 | Engagement context |
 
-**Also needed - not be in current schema:** - very important
+**Also needed - not be in current schema:** - very importantco
 Consider adding to to make it more personalized
 
 | Field | Type | Purpose |
