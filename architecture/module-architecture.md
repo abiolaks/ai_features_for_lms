@@ -30,4 +30,4 @@
 | DP-1 | Catalogue Snapshot | Courses, modules, tags, skills, prerequisites |
 | DP-2 | Learner Context | Profile, enrollments, completions, scores |
 | DP-3 | Content Corpus | Chunked text + embeddings per lesson version |
-| DP-4 | Mentor Directory | Mentor profiles, specializations, availability (Phase 2) 
+| DP-4 | Mentor Directory | Mentor profiles, specializations, availability (Phase 2) 0
