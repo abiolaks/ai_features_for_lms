@@ -1,3 +1,58 @@
+## Session: — AI06: Learning Paths — Observability Spans
+
+**What was implemented:**
+- Added structured console.log span helpers (`startSpan`, `setAttr`, `endSpan`)
+- Two top-level spans: `data.fetch` (profile + catalogue + progress) and `path.generate` (LLM call + validation)
+- Sub-span: `ai_gateway.generate` (tier, status, duration)
+- `path.generate` attributes: `course_count`, `why_this_fits_count`, `prereq_violations`, `llm_model`, `llm_tokens`, `ai_status`
+- `data.fetch` attributes: `catalogue_courses`, `progress_entries`, `has_profile`, `learner_id`, `org_id`
+- LMS fetch spans (`lms.fetch`) are commented out — ready when LMS is live
+- Prerequisite validator now tracks `prereq_violations` count → surfaced in span
+- 6 new span tests added (20/20 passing)
+
+**LMS APIs AI06 needs (documented for backend team):**
+1. `GET /v1/learner/profile` — skills, goals, experience_level, streak_days, points
+2. `GET /v1/catalog?org_id=X` — published courses with difficulty, category, prerequisites
+3. `GET /v1/progress/user?userId=X` — enrollments with status + progress_pct
+
+Gaps in current api.json: no `prerequisites` field on CourseResource, no `goals`/`experience_level`/`skills` on profile.
+
+**Related files:**
+- `workers/ai-paths/src/index.ts` (spans added, prereq violation tracking)
+- `workers/ai-paths/test/index.test.ts` (6 new span tests)
+- `docs/lms-api-contract-for-backend.md` (new — full contract for LMS team)
+- `docs/api-contract.md` (updated — added AI06 endpoint docs)
+
+---
+
+## Session: — LMS Webhook Secret Setup
+
+**Secret generated:** `LMS_WEBHOOK_SECRET` (64-char hex via `openssl rand -hex 32`)
+**Set on:** `ai-indexing` worker via `wrangler secret put`
+**Validation added:** `ai-indexing/src/index.ts` now checks `X-Webhook-Secret` header on all POST requests to `/index`, `/deindex`, `/backfill`
+**Tests:** 17/17 passing (added 2 auth tests — missing secret → 401, wrong secret → 401)
+**Deployed:** `ai-indexing` deployed with webhook auth active
+
+**Secret exchange flow:**
+- AI team generates `LMS_WEBHOOK_SECRET` → shares with LMS team
+- LMS team generates `LMS_INTERNAL_KEY` → shares with AI team
+- LMS team provides `LMS_GATEWAY_URL` (their public URL, e.g. `https://lms-dev-xyz.trycloudflare.com`)
+
+**How LMS team uses webhook:**
+```bash
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/index \
+  -H "X-Webhook-Secret: <secret>" \
+  -H "Content-Type: application/json" \
+  -d '{ "event":"publish", "org_id":"org-wragby", "entity":{...} }'
+```
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (Env interface + auth check)
+- `workers/ai-indexing/test/index.test.ts` (webhook auth tests)
+- `docs/lms-api-contract-for-backend.md` (full webhook + LMS API docs for backend team)
+
+---
+
 ## Session: — Contract: What the Backend Engineer Needs
 
 **Your URLs (for development):**
