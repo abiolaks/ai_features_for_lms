@@ -18,7 +18,7 @@ export interface Env {
 
 // ──── Constants ────
 
-const EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b";
+const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
 
 // ──── Request Types ────
 
@@ -83,24 +83,70 @@ async function fetchStreamVTT(
 //  Embedding + Vectorize Upsert
 // ════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════
+//  Chunking
+// ════════════════════════════════════════════════════════
+// Vectorize metadata limit is 10,240 bytes. Long transcripts
+// (20+ min videos) exceed this. We split into ~2000-char chunks,
+// each stored as a separate vector with shared lesson metadata.
+// Total metadata per chunk ≈ 2000 + 200 (fields) ≈ 2.2KB — safe.
+
+const CHUNK_SIZE = 2000; // chars per chunk
+
+function chunkText(text: string): string[] {
+  if (text.length <= CHUNK_SIZE) return [text];
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = start + CHUNK_SIZE;
+    // Try to break at a sentence boundary
+    if (end < text.length) {
+      const period = text.lastIndexOf(". ", end);
+      const newline = text.lastIndexOf("\n", end);
+      const space = text.lastIndexOf(" ", end);
+      const breakpoint = Math.max(period, newline, space);
+      if (breakpoint > start + CHUNK_SIZE / 2) {
+        end = breakpoint + 1;
+      }
+    }
+    chunks.push(text.substring(start, end).trim());
+    start = end;
+  }
+  return chunks;
+}
+
 async function embedAndUpsert(
   env: Env,
   org_id: string,
   entity: IndexRequest["entity"],
   content: string,
   transcriptSource: string
-): Promise<void> {
-  // 1. Generate embedding vector
-  const result = await env.AI.run(EMBEDDING_MODEL, { text: content });
-  const vector: number[] = Array.isArray(result) ? result : result?.data?.[0] ?? result;
+): Promise<{ chunks: number; content_length: number }> {
+  // 0. Clean up old vectors (pre-chunking: single ID, or previous chunks)
+  try {
+    for (let batch = 0; batch < 3; batch++) {
+      const ids = Array.from({ length: 20 }, (_, i) => {
+        const chunkIdx = batch * 20 + i;
+        return chunkIdx === 0 ? `lesson-${entity.id}` : `lesson-${entity.id}-chunk${chunkIdx - 1}`;
+      });
+      const existing = await env.VECTORIZE_INDEX.getByIds(ids);
+      const stale = existing.filter((v: any) => v !== null).map((v: any) => v.id);
+      if (stale.length > 0) await env.VECTORIZE_INDEX.deleteByIds(stale);
+    }
+  } catch {
+    // Pre-cleanup is best-effort; upsert will still work
+  }
 
-  // 2. Build vector ID + metadata
-  const vid = `lesson-${entity.id}`;
+  const chunks = chunkText(content);
+  const vectors: { id: string; values: number[]; metadata: Record<string, any> }[] = [];
 
-  // 3. Upsert to Vectorize
-  await env.VECTORIZE_INDEX.upsert([
-    {
-      id: vid,
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const result = await env.AI.run(EMBEDDING_MODEL, { text: chunk });
+    const vector: number[] = Array.isArray(result) ? result : result?.data?.[0] ?? result;
+
+    vectors.push({
+      id: `lesson-${entity.id}-chunk${i}`,
       values: vector,
       metadata: {
         title: entity.title,
@@ -111,11 +157,19 @@ async function embedAndUpsert(
         content_type: entity.contentType || "unknown",
         duration_seconds: entity.durationSeconds || 0,
         transcript_source: transcriptSource,
-        // Store content so AI04 can retrieve it
-        content,
+        chunk_index: i,
+        total_chunks: chunks.length,
+        content: chunk,
       },
-    },
-  ]);
+    });
+  }
+
+  // Upsert in batches of 10 (Vectorize max)
+  for (let i = 0; i < vectors.length; i += 10) {
+    await env.VECTORIZE_INDEX.upsert(vectors.slice(i, i + 10));
+  }
+
+  return { chunks: chunks.length, content_length: content.length };
 }
 
 // ════════════════════════════════════════════════════════
@@ -135,6 +189,20 @@ export default {
     // GET /captions/:videoId — diagnostic: check captions
     if (req.method === "GET" && path.startsWith("/captions/")) {
       return handleCheckCaptions(path.split("/captions/")[1], env);
+    }
+
+    // GET /diag-index/:videoId — diagnostic: index a single video (dev only)
+    if (req.method === "GET" && path.startsWith("/diag-index/")) {
+      const parts = path.split("/");
+      const videoId = parts[2];
+      const title = parts[3] ? decodeURIComponent(parts[3]) : "Untitled";
+      return handleDiagIndex(videoId, title, env);
+    }
+
+    // GET /diag-deindex/:lessonId — diagnostic: remove all vectors for a lesson
+    if (req.method === "GET" && path.startsWith("/diag-deindex/")) {
+      const lessonId = path.split("/diag-deindex/")[1];
+      return handleDiagDeindex(lessonId, env);
     }
 
     // GET /env-check — diagnostic: list env vars
@@ -226,6 +294,32 @@ async function handleCheckCaptions(videoId: string, env: Env): Promise<Response>
 }
 
 // ════════════════════════════════════════════════════════
+//  GET /diag-index/:videoId/:title? — Diagnostic index (dev)
+// ════════════════════════════════════════════════════════
+
+async function handleDiagIndex(videoId: string, title: string, env: Env): Promise<Response> {
+  return handleIndex({
+    event: "publish",
+    org_id: "dev-org",
+    entity: {
+      id: videoId,
+      title,
+      contentType: "video",
+      cloudflareVideoId: videoId,
+      streamStatus: "ready",
+    },
+  }, env);
+}
+
+// ════════════════════════════════════════════════════════
+//  GET /diag-deindex/:lessonId — Diagnostic deindex (dev)
+// ════════════════════════════════════════════════════════
+
+async function handleDiagDeindex(lessonId: string, env: Env): Promise<Response> {
+  return handleDeindex({ entity: { id: lessonId } } as any, env);
+}
+
+// ════════════════════════════════════════════════════════
 //  POST /index — Publish handler
 // ════════════════════════════════════════════════════════
 
@@ -270,8 +364,8 @@ async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
   // ── Text lesson — metadata-only ──
   const content = buildMetadataContent(entity);
   try {
-    await embedAndUpsert(env, org_id, entity, content, "none");
-    return Response.json({ status: "indexed", transcript_source: "none", content_length: content.length });
+    const { chunks, content_length } = await embedAndUpsert(env, org_id, entity, content, "none");
+    return Response.json({ status: "indexed", transcript_source: "none", content_length, chunks });
   } catch (err: any) {
     return Response.json({ error: `Indexing failed: ${err.message}` }, { status: 500 });
   }
@@ -324,13 +418,14 @@ async function handleVideoIndex(
       transcriptSource = "ai_generated";
     }
 
-    // Embed + upsert to Vectorize
-    await embedAndUpsert(env, org_id, entity, transcript, transcriptSource);
+    // Embed + upsert to Vectorize (chunked if needed)
+    const { chunks, content_length } = await embedAndUpsert(env, org_id, entity, transcript, transcriptSource);
 
     return Response.json({
       status: "indexed",
       transcript_source: transcriptSource,
-      content_length: transcript.length,
+      content_length,
+      chunks,
     });
   } catch (err: any) {
     console.error(`Video ${videoId} captioning failed: ${err.message}, using metadata fallback`);
@@ -342,10 +437,11 @@ async function handleVideoIndex(
       // swallow
     }
 
+    const fallbackContent = buildMetadataContent(entity);
     return Response.json({
       status: "fallback",
       transcript_source: "none",
-      content_length: buildMetadataContent(entity).length,
+      content_length: fallbackContent.length,
       error: err.message,
     });
   }
@@ -388,8 +484,22 @@ function buildMetadataContent(entity: IndexRequest["entity"]): string {
 async function handleDeindex(body: IndexRequest, env: Env): Promise<Response> {
   const { entity } = body;
   try {
-    await env.VECTORIZE_INDEX.deleteByIds([`lesson-${entity.id}`]);
-    return Response.json({ status: "deindexed" });
+    // Delete all chunked vectors: lesson-{id}, lesson-{id}-chunk0, ...
+    // getByIds has a 20-ID limit, so batch in groups of 20
+    let totalRemoved = 0;
+    for (let batch = 0; batch < 3; batch++) {
+      const ids = Array.from({ length: 20 }, (_, i) => {
+        const chunkIdx = batch * 20 + i;
+        return chunkIdx === 0 ? `lesson-${entity.id}` : `lesson-${entity.id}-chunk${chunkIdx - 1}`;
+      });
+      const existing = await env.VECTORIZE_INDEX.getByIds(ids);
+      const toDelete = existing.filter((v: any) => v !== null).map((v: any) => v.id);
+      if (toDelete.length > 0) {
+        await env.VECTORIZE_INDEX.deleteByIds(toDelete);
+        totalRemoved += toDelete.length;
+      }
+    }
+    return Response.json({ status: "deindexed", vectors_removed: totalRemoved });
   } catch (err: any) {
     return Response.json({ error: `Deindex failed: ${err.message}` }, { status: 500 });
   }
