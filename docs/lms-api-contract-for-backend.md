@@ -18,7 +18,46 @@ LMS_WEBHOOK_SECRET=**********************
 
 ## Quick Test — Verify Everything Works
 
-Once you have both secrets, run these to verify connectivity:
+### Who Calls What — URL Map
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  LMS BACKEND (Python) — your code                                │
+│                                                                  │
+│  Calls these (with X-Webhook-Secret):                           │
+│    POST https://ai-indexing.yomi-alarape.workers.dev/index      │
+│    POST https://ai-indexing.yomi-alarape.workers.dev/deindex     │
+│    POST https://ai-indexing.yomi-alarape.workers.dev/backfill   │
+│                                                                  │
+│  Exposes these (validates X-API-Key):                           │
+│    GET  /api/v1/learner/profile                                  │
+│    GET  /api/v1/catalog                                          │
+│    GET  /api/v1/progress/user                                    │
+│    GET  /api/v1/lessons/{lesson}                                 │
+│    GET  /api/v1/health                                           │
+└──────────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────┐
+│  LMS FRONTEND (browser JavaScript) — your code                  │
+│                                                                  │
+│  Calls these (no auth — will sit behind LMS Gateway later):     │
+│    POST https://ai-tutor.yomi-alarape.workers.dev/tutor/ask     │
+│    POST https://ai-tutor.yomi-alarape.workers.dev/tutor/clear   │
+│    wss://ai-tutor.yomi-alarape.workers.dev/tutor/ws?learner_id= │
+│    POST https://ai-paths.yomi-alarape.workers.dev/paths/generate│
+│                                                                  │
+│  What you pass from backend → frontend:                         │
+│    learner_id  — the LMS user ID (e.g., "user-42")              │
+│    lesson_id   — the ID of the current lesson                   │
+│    course_id   — the ID of the current course                   │
+│    org_id      — the organization ID                            │
+│                                                                  │
+│  You do NOT open WebSockets from the backend. The browser does. │
+│  You just embed learner_id in the page, and the frontend uses it.│
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### Verify with Curl
 
 ```bash
 # 1. Publish a video lesson (returns instantly — 202 Accepted)
@@ -488,7 +527,9 @@ Content-Type: application/json
 
 ---
 
-### GET /tutor/ws — WebSocket Streaming (recommended for production)
+### GET /tutor/ws — WebSocket Streaming (for frontend, not backend)
+
+> **The LMS backend does NOT open WebSockets.** The browser does. You just pass `learner_id`, `lesson_id`, `course_id`, `org_id` to the frontend. The frontend opens the WebSocket using those IDs.
 
 Opens a persistent WebSocket connection for real-time token streaming. Words appear as the LLM generates them — no spinner, no waiting.
 
