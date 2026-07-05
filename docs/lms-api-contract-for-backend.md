@@ -28,6 +28,11 @@ LMS_WEBHOOK_SECRET=**********************
 │    POST https://ai-indexing.yomi-alarape.workers.dev/index      │
 │    POST https://ai-indexing.yomi-alarape.workers.dev/deindex     │
 │    POST https://ai-indexing.yomi-alarape.workers.dev/backfill   │
+│    POST https://ai-indexing.yomi-alarape.workers.dev/extract-pdf│
+│                                                                  │
+│  Stores content in:                                             │
+│    R2: lms-content-staging (PDFs, PPTs, documents)              │
+│    Cloudflare Stream (videos)                                    │
 │                                                                  │
 │  Exposes these (validates X-API-Key):                           │
 │    GET  /api/v1/learner/profile                                  │
@@ -103,6 +108,17 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/backfill \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Secret: $LMS_WEBHOOK_SECRET" \
   -d '{"org_id": "org-wragby"}'
+
+# 5. Index a PDF from R2
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/extract-pdf \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: $LMS_WEBHOOK_SECRET" \
+  -d '{
+    "r2Key": "content/document/2026/06/29/<uuid>/module-4-lesson-3-core-lecture.pdf",
+    "lesson_id": "module-4-lesson-3",
+    "title": "Module 4 — Decision Intelligence",
+    "org_id": "org-wragby"
+  }'
 ```
 
 ---
@@ -686,6 +702,75 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/deindex \
   }'
 ```
 
+### Publish a PDF/PPT lesson (via R2)
+
+For PDF and PPT lessons, call `/extract-pdf` instead of `/index`. The worker fetches the file from R2, extracts text with `unpdf` (PDF.js for Workers), and queues it for indexing.
+
+```bash
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/extract-pdf \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: <shared-secret>" \
+  -d '{
+    "r2Key": "content/document/2026/06/29/uuid/module-4-lesson-3-core-lecture.pdf",
+    "lesson_id": "module-4-lesson-3",
+    "title": "AI-Powered Decision Intelligence",
+    "org_id": "org-wragby"
+  }'
+```
+
+**Request fields:**
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `r2Key` | `string` | ✅ | Full path to the PDF/PPT in the `lms-content-staging` R2 bucket |
+| `lesson_id` | `string` | ✅ | Matches the lesson's ID in the LMS |
+| `title` | `string` | ✅ | Display title for citations |
+| `org_id` | `string` | ✅ | Org isolation |
+
+**Response (202):**
+
+```json
+{
+  "status": "queued",
+  "chars": 12476,
+  "message": "Extracted 12476 chars, queued for indexing"
+}
+```
+
+**Response — file not found (404):**
+
+```json
+{
+  "error": "file_not_found",
+  "key": "content/document/.../nonexistent.pdf"
+}
+```
+
+**Response — no extractable text (422):**
+
+```json
+{
+  "error": "no_extractable_text",
+  "key": "content/document/.../scanned-doc.pdf",
+  "hint": "PDF may be scanned (needs OCR) or contain only images. Pre-extract text with PyPDF2 and send via entity.content in /index."
+}
+```
+
+**How it works:**
+1. Worker fetches PDF from R2 (`lms-content-staging` bucket)
+2. `unpdf` decompresses + extracts text (handles FlateDecode compression)
+3. Text is pushed to the indexing queue → chunked → embedded → stored in Vectorize
+4. Returns 202 instantly — same async model as `/index`
+
+**When to use `/extract-pdf` vs `/index`:**
+
+| Content Type | Endpoint | Payload |
+|-------------|----------|---------|
+| Video | `POST /index` | `{ entity: { contentType: "video", cloudflareVideoId: "..." } }` |
+| PDF (in R2) | `POST /extract-pdf` | `{ r2Key: "...", lesson_id, title, org_id }` |
+| PPT (in R2) | `POST /extract-pdf` | Same as PDF — PPTX text extracted from `<a:t>` XML elements |
+| PDF with pre-extracted text | `POST /index` | `{ entity: { contentType: "pdf", content: "Chapter 1..." } }` |
+
 ### Responses
 
 | Scenario | Status | Body |
@@ -726,48 +811,38 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/backfill \
 
 ## PDF & PPT Content Indexing
 
-> **Status:** Spec defined, worker-side code pending. Backend should send data in this format once PDF extraction is implemented.
+> **Status:** Worker-side extraction implemented with `unpdf`. LMS just needs to call `/extract-pdf` with an R2 key.
 
 ### How It Works (End-to-End)
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  LMS Backend (Python)                                           │
+│  LMS Backend                                                     │
 │                                                                  │
-│  PDF → PyPDF2/pdfplumber extracts text per page                 │
-│  PPT → python-pptx extracts text per slide                      │
+│  1. Instructor uploads PDF → stored in R2                       │
+│     (lms-content-staging/content/document/.../lesson.pdf)        │
 │                                                                  │
-│  Sends to ai-indexing worker with pre-extracted text:           │
+│  2. Instructor clicks "Publish" → LMS calls:                    │
+│     POST /extract-pdf                                            │
+│     { r2Key: ".../lesson.pdf", lesson_id, title, org_id }       │
 │                                                                  │
-│  POST /index                                                     │
-│  {                                                               │
-│    "event": "publish",                                           │
-│    "org_id": "org-wragby",                                       │
-│    "entity": {                                                   │
-│      "id": "lesson-pdf-123",                                     │
-│      "title": "Introduction to Python",                          │
-│      "contentType": "pdf",        ← "pdf" or "ppt"              │
-│      "content": "Chapter 1: Getting Started\nPython is a..."     │
-│                    ↑ Full extracted text (all pages/slides)     │
-│    }                                                             │
-│  }                                                               │
+│  That's it. No extraction code needed on the LMS side.          │
 └──────────────────────┬───────────────────────────────────────────┘
                        │
                        ▼
 ┌──────────────────────────────────────────────────────────────────┐
 │  ai-indexing Worker                                              │
 │                                                                  │
-│  1. Reads entity.content                                         │
-│  2. Chunks text into ~2000-char pieces (sentence boundaries)     │
-│  3. Embeds each chunk → bge-large-en-v1.5 (1024-dim)            │
-│  4. Stores in Vectorize with metadata:                           │
-│     {                                                             │
-│       title: "Introduction to Python",                            │
-│       lesson_id: "lesson-pdf-123",                                │
-│       content_type: "pdf",                                        │
-│       page_number: 12,          ← page the chunk came from       │
-│       content: "List comprehensions provide..."                   │
-│     }                                                             │
+│  1. Fetch PDF from R2: env.LMS_CONTENT.get(r2Key)               │
+│  2. Extract text: unpdf.extractText(pdf, {mergePages:true})     │
+│     → decompresses FlateDecode, extracts all pages              │
+│  3. Push to queue: INDEXING_QUEUE.send({ entity: { content } })│
+│  4. Return 202 Accepted (instant)                                │
+│                                                                  │
+│  Queue consumer (async):                                         │
+│  5. chunkText() at 2000-char sentence boundaries                │
+│  6. embedAndUpsert() → bge-large-en-v1.5 → Vectorize           │
+│  7. Metadata: { content_type: "pdf", lesson_id, org_id, ... }   │
 └──────────────────────┬───────────────────────────────────────────┘
                        │
                        ▼
@@ -796,51 +871,20 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/backfill \
 
 ### What the LMS Must Send
 
-For PDFs and PPTs, the `/index` webhook payload must include the full extracted text. **This is the LMS backend's responsibility.** Python has mature, reliable libraries for this.
-
-#### PDF Extraction (recommended libraries)
-
-```python
-# Option 1: PyPDF2 (simpler, no layout)
-from PyPDF2 import PdfReader
-reader = PdfReader("course.pdf")
-text = "\n\n".join(page.extract_text() for page in reader.pages)
-
-# Option 2: pdfplumber (better table/layout handling)
-import pdfplumber
-with pdfplumber.open("course.pdf") as pdf:
-    text = "\n\n".join(page.extract_text() for page in pdf.pages)
-```
-
-#### PPT Extraction
-
-```python
-from pptx import Presentation
-prs = Presentation("slides.pptx")
-text = "\n\n".join(
-    f"Slide {i+1}: " + " ".join(
-        shape.text for shape in slide.shapes if hasattr(shape, "text")
-    )
-    for i, slide in enumerate(prs.slides)
-)
-```
+Just the R2 key — `unpdf` handles the rest. No extraction code needed.
 
 #### Webhook Payload
 
 ```json
 {
-  "event": "publish",
-  "org_id": "org-wragby",
-  "entity": {
-    "id": "lesson-pdf-123",
-    "title": "Introduction to Python",
-    "contentType": "pdf",
-    "content": "<full extracted text from all pages/slides>"
-  }
+  "r2Key": "content/document/2026/06/29/uuid/module-4-lesson-3-core-lecture.pdf",
+  "lesson_id": "module-4-lesson-3",
+  "title": "AI-Powered Decision Intelligence",
+  "org_id": "org-wragby"
 }
 ```
 
-The worker handles the rest — chunking, embedding, and storing.
+The worker fetches the PDF from R2, extracts text with `unpdf`, and queues it for indexing.
 
 ### Chunking Strategy
 
@@ -856,9 +900,9 @@ The worker handles the rest — chunking, embedding, and storing.
 
 | Task | Who | Why |
 |------|-----|-----|
-| Extract text from PDF/PPT | **LMS Backend** | Python has mature PDF libraries (PyPDF2, pdfplumber); JS PDF parsing is fragile and bloats the worker |
-| Segment by page/slide | **LMS Backend** | The LMS knows the document structure; the worker only sees raw text |
-| Chunk text for embedding | **Worker** | Already built — splits at sentence boundaries, handles Vectorize metadata limits |
+| Store PDF in R2 | **LMS Backend** | File upload during lesson creation |
+| Extract text from PDF | **Worker (unpdf)** | Decompresses FlateDecode, extracts all text — no LMS code needed |
+| Chunk text for embedding | **Worker** | Splits at sentence boundaries, handles Vectorize metadata limits |
 | Embed & store vectors | **Worker** | Uses Cloudflare Workers AI (bge-large-en-v1.5) |
 | Query & cite | **Worker (tutor)** | Searches Vectorize, builds grounded prompts, returns citations |
 
@@ -890,11 +934,11 @@ When the learner asks a question, the tutor returns citations in this format:
 
 ### Implementation Checklist
 
-- [ ] **LMS Backend:** Add PDF extraction with PyPDF2 or pdfplumber
-- [ ] **LMS Backend:** Add PPT extraction with python-pptx
-- [ ] **LMS Backend:** Send extracted text as `entity.content` in the `/index` webhook
-- [ ] **ai-indexing Worker:** Read `entity.content` if present (fallback to `buildMetadataContent`)
-- [ ] **ai-indexing Worker:** Store `content_type` in Vectorize metadata
+- [ ] **LMS Backend:** Add PDF upload to R2 during lesson creation
+- [ ] **LMS Backend:** Call `POST /extract-pdf` when PDF lesson is published
+- [x] **ai-indexing Worker:** Read `entity.content` if present (fallback to `buildMetadataContent`)
+- [x] **ai-indexing Worker:** Fetch PDF from R2 and extract text with unpdf
+- [x] **ai-indexing Worker:** Store `content_type` in Vectorize metadata
 - [ ] **ai-tutor Worker:** Include `source_type` and `location` in citation response
 - [ ] **ai-tutor Worker:** Format page/slide numbers in LLM prompt context
 
