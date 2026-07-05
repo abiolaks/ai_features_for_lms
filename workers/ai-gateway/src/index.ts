@@ -28,6 +28,12 @@ export default {
     }
 
     const url = new URL(req.url);
+
+    // POST /stream — streaming LLM response
+    if (url.pathname === '/stream') {
+      return handleStream(req, env);
+    }
+
     if (url.pathname !== '/generate') {
       return json({ error: 'not_found' }, 404);
     }
@@ -99,6 +105,140 @@ export default {
     return json(response, 200);
   },
 };
+
+// ════════════════════════════════════════════════════════
+//  POST /stream — SSE streaming
+// ════════════════════════════════════════════════════════
+
+async function handleStream(req: Request, env: Env): Promise<Response> {
+  let body: GenerateRequest;
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'invalid_json' }, 400);
+  }
+
+  if (!body.messages?.length) {
+    return json({ error: 'missing_field', field: 'messages' }, 400);
+  }
+  if (!body.tier || !['standard', 'quality'].includes(body.tier)) {
+    return json({ error: 'invalid_tier', valid: ['standard', 'quality'] }, 400);
+  }
+  if (!body.org_id) {
+    return json({ error: 'missing_field', field: 'org_id' }, 400);
+  }
+
+  // Budget check
+  const budget = await getBudget(env.DB, body.org_id);
+  if (budget && budget.tokens_used_this_period >= budget.monthly_token_cap) {
+    return json({ error: 'budget_exhausted' }, 429);
+  }
+
+  const model = MODELS[body.tier];
+  const maxTokens = body.tier === 'quality' ? 2048 : 1024;
+
+  try {
+    // Workers AI streaming — returns a ReadableStream
+    const aiStream = (await env.AI.run(model, {
+      messages: body.messages,
+      stream: true,
+      max_tokens: maxTokens,
+    })) as ReadableStream;
+
+    // Wrap in SSE (Server-Sent Events) format
+    const sseStream = aiStreamToSSE(aiStream, env.DB, body.org_id);
+
+    return new Response(sseStream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+      },
+    });
+  } catch (err) {
+    console.error('Stream error:', err);
+    return json({ error: 'ai_call_failed', detail: String(err) }, 502);
+  }
+}
+
+// Transform Workers AI stream → SSE with token tracking
+function aiStreamToSSE(
+  stream: ReadableStream,
+  db: D1Database,
+  orgId: string
+): ReadableStream {
+  let fullResponse = '';
+  let tokenCount = 0;
+  const encoder = new TextEncoder();
+
+  // Use pipeThrough to handle Workers AI SSE format natively
+  const [workersOut, consumerIn] = stream.tee();
+
+  // Side-reader: accumulates full response for the final "done" event
+  const reader = workersOut.getReader();
+  const decoder = new TextDecoder();
+
+  // Read the Workers AI stream in the background to accumulate tokens
+  const accumulatePromise = (async () => {
+    let buffer = '';
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+            try {
+              const chunk = JSON.parse(line.slice(6));
+              if (chunk.response) {
+                fullResponse += chunk.response;
+                tokenCount++;
+              }
+            } catch { /* skip */ }
+          }
+        }
+      }
+    } catch { /* best-effort */ }
+  })();
+
+  // Transform each Workers AI SSE chunk into our SSE format
+  const transformer = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      const text = decoder.decode(chunk, { stream: true });
+      const lines = text.split('\n').filter(Boolean);
+      for (const line of lines) {
+        if (line.startsWith('data: ') && !line.includes('[DONE]')) {
+          try {
+            const parsed = JSON.parse(line.slice(6));
+            if (parsed.response) {
+              const msg = JSON.stringify({ type: 'token', text: parsed.response });
+              controller.enqueue(encoder.encode(`data: ${msg}\n\n`));
+            }
+          } catch { /* skip */ }
+        }
+      }
+    },
+    async flush(controller) {
+      // Wait for accumulation to finish
+      await accumulatePromise;
+      // Send final done event
+      const doneMsg = JSON.stringify({
+        type: 'done',
+        response: fullResponse,
+        tokens_used: tokenCount,
+      });
+      controller.enqueue(encoder.encode(`data: ${doneMsg}\n\n`));
+      // Track tokens async
+      if (tokenCount > 0) {
+        trackTokens(db, orgId, tokenCount).catch(() => {});
+      }
+    },
+  });
+
+  return consumerIn.pipeThrough(transformer);
+}
 
 // ──── Helpers ────
 
