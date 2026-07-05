@@ -59,7 +59,7 @@ LMS Backend ──POST /index──▶ ai-indexing Worker
 
 ```
 LMS Frontend ──POST /paths/generate──▶ ai-paths Worker
-              ──POST /tutor/chat─────▶ ai-tutor Worker
+              ──POST /tutor/ask──────▶ ai-tutor Worker
               ──POST /insights───────▶ ai-insights Worker
 ```
 
@@ -74,7 +74,7 @@ LMS Frontend ──POST /paths/generate──▶ ai-paths Worker
 |--------|-----------|---------|-----------|---------------------------|
 | `ai-indexing` | LMS Backend (webhook) | Push | `X-Webhook-Secret` ← `LMS_WEBHOOK_SECRET` | Same |
 | `ai-paths` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
-| `ai-tutor` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
+| `ai-tutor` | LMS Frontend | Pull | Per-learner Durable Object (session isolation) | LMS Gateway → internal route |
 | `ai-insights` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
 | `ai-recommendations` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
 | `ai-dashboard` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
@@ -294,6 +294,151 @@ AI Workers call this to check if the LMS is reachable before making data calls. 
 
 ---
 
+## AI Tutor API (for LMS Frontend)
+
+The LMS frontend calls these endpoints directly to power the in-lesson tutor widget.
+
+### Architecture: Per-Learner Durable Objects
+
+Each learner gets their own **Durable Object** — a dedicated, long-lived instance that persists conversation history in SQLite. The worker routes requests deterministically by `learner_id`.
+
+```
+LMS Frontend                    ai-tutor Worker
+─────────────                   ──────────────
+POST /tutor/ask                  ┌──────────────────────┐
+  learner_id: "user-42"  ──────▶ │ TutorSession         │
+                                 │ "session-user-42"    │
+                                 │                      │
+                                 │ SQLite:              │
+                                 │  messages table      │
+                                 │  ← persists across  │
+                                 │    requests, crashes │
+                                 │    and deployments  │
+                                 └──────────────────────┘
+```
+
+**Key behaviors:**
+- Same `learner_id` always reaches the same DO (deterministic routing)
+- Conversation persists across browser tabs, refreshes, and worker redeploys
+- Max 20 messages kept in context (older ones auto-pruned)
+- Each learner is isolated — learner-42 cannot see learner-99's history
+
+---
+
+### POST /tutor/ask
+
+```
+POST https://ai-tutor.yomi-alarape.workers.dev/tutor/ask
+Content-Type: application/json
+```
+
+**Request:**
+
+```json
+{
+  "question": "What are list comprehensions?",
+  "learner_id": "user-42",
+  "lesson_id": "lesson-pdf-123",
+  "course_id": "course-py",
+  "org_id": "org-wragby",
+  "expand_scope": "lesson"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `question` | `string` | ✅ | The learner's question |
+| `learner_id` | `string` | ✅ | Routes to the right DO session. Must be stable per learner |
+| `lesson_id` | `string` | ✅ | Scopes content search to this lesson |
+| `course_id` | `string` | ✅ | Used for scope expansion and filtering |
+| `org_id` | `string` | ✅ | Org isolation |
+| `expand_scope` | `string` | ❌ | `"lesson"` (default), `"module"`, or `"course"` — broadens content search |
+| `module_id` | `string` | ❌ | Required only when `expand_scope: "module"` |
+
+**Response (200):**
+
+```json
+{
+  "answer": "List comprehensions provide a concise way to create lists using the syntax [expr for item in iterable]. [Python Basics, Page 12]",
+  "citations": [
+    {
+      "lesson_title": "Python Basics",
+      "excerpt": "List comprehensions provide a concise way to create lists...",
+      "score": 0.91
+    }
+  ],
+  "scope_expansion_suggested": false,
+  "history_length": 6
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `answer` | `string` | Grounded answer with inline citations |
+| `citations` | `array` | Source excerpts from indexed content |
+| `citations[].lesson_title` | `string` | Title of the source lesson |
+| `citations[].excerpt` | `string` | Relevant content snippet (up to 2000 chars) |
+| `citations[].score` | `number` | Semantic similarity score (0–1) |
+| `scope_expansion_suggested` | `boolean` | `true` when no matches found in current scope — frontend can prompt user to broaden |
+| `history_length` | `number` | Total messages in this session (user + assistant). Starts at 2 for first exchange |
+
+**Response — no matches (200):**
+
+```json
+{
+  "answer": "I couldn't find that in this lesson.",
+  "citations": [],
+  "scope_expansion_suggested": true,
+  "history_length": 2
+}
+```
+
+**Response — validation error (400):**
+
+```json
+{
+  "error": "missing_field: lesson_id"
+}
+```
+
+**Response — gateway error (502):**
+
+```json
+{
+  "error": "AI Gateway error: ..."
+}
+```
+
+---
+
+### POST /tutor/clear
+
+Clears a learner's entire conversation history. Useful for "start fresh" or when a learner switches lessons.
+
+```
+POST https://ai-tutor.yomi-alarape.workers.dev/tutor/clear
+Content-Type: application/json
+
+{
+  "learner_id": "user-42"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "status": "cleared"
+}
+```
+
+**When to call this:**
+- Learner clicks "New conversation" in the tutor widget
+- Learner navigates to a completely different course
+- Learner's session expires / logout
+
+---
+
 ## LMS → AI Worker Webhook
 
 The LMS calls the AI Indexing Worker whenever a lesson is published or unpublished.
@@ -370,6 +515,182 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/deindex \
 - `202 video_not_ready` → call `/index` again when `streamStatus` becomes `"ready"`
 - Any `5xx` → retry with exponential backoff (1s, 2s, 4s, max 3 attempts)
 - `4xx` → do not retry, fix the request
+
+---
+
+## PDF & PPT Content Indexing
+
+> **Status:** Spec defined, worker-side code pending. Backend should send data in this format once PDF extraction is implemented.
+
+### How It Works (End-to-End)
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│  LMS Backend (Python)                                           │
+│                                                                  │
+│  PDF → PyPDF2/pdfplumber extracts text per page                 │
+│  PPT → python-pptx extracts text per slide                      │
+│                                                                  │
+│  Sends to ai-indexing worker with pre-extracted text:           │
+│                                                                  │
+│  POST /index                                                     │
+│  {                                                               │
+│    "event": "publish",                                           │
+│    "org_id": "org-wragby",                                       │
+│    "entity": {                                                   │
+│      "id": "lesson-pdf-123",                                     │
+│      "title": "Introduction to Python",                          │
+│      "contentType": "pdf",        ← "pdf" or "ppt"              │
+│      "content": "Chapter 1: Getting Started\nPython is a..."     │
+│                    ↑ Full extracted text (all pages/slides)     │
+│    }                                                             │
+│  }                                                               │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  ai-indexing Worker                                              │
+│                                                                  │
+│  1. Reads entity.content                                         │
+│  2. Chunks text into ~2000-char pieces (sentence boundaries)     │
+│  3. Embeds each chunk → bge-large-en-v1.5 (1024-dim)            │
+│  4. Stores in Vectorize with metadata:                           │
+│     {                                                             │
+│       title: "Introduction to Python",                            │
+│       lesson_id: "lesson-pdf-123",                                │
+│       content_type: "pdf",                                        │
+│       page_number: 12,          ← page the chunk came from       │
+│       content: "List comprehensions provide..."                   │
+│     }                                                             │
+└──────────────────────┬───────────────────────────────────────────┘
+                       │
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  ai-tutor Worker (at query time)                                 │
+│                                                                  │
+│  Learner: "How do list comprehensions work?"                     │
+│                                                                  │
+│  → Embeds question → searches Vectorize                          │
+│  → Top matches: chunk-5 (page 12, score 0.91),                   │
+│                 chunk-3 (page 3, score 0.72)                     │
+│                                                                  │
+│  → Builds grounded prompt for LLM:                              │
+│    [Source: Introduction to Python, Page 12]                     │
+│    List comprehensions provide a concise way to create lists...  │
+│                                                                  │
+│    [Source: Introduction to Python, Page 3]                      │
+│    Python supports several data structures including lists...    │
+│                                                                  │
+│  → LLM answers with citations:                                   │
+│    "List comprehensions use the syntax [expr for item in         │
+│     iterable] to create new lists concisely.                     │
+│     [Introduction to Python, Page 12]"                           │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+### What the LMS Must Send
+
+For PDFs and PPTs, the `/index` webhook payload must include the full extracted text. **This is the LMS backend's responsibility.** Python has mature, reliable libraries for this.
+
+#### PDF Extraction (recommended libraries)
+
+```python
+# Option 1: PyPDF2 (simpler, no layout)
+from PyPDF2 import PdfReader
+reader = PdfReader("course.pdf")
+text = "\n\n".join(page.extract_text() for page in reader.pages)
+
+# Option 2: pdfplumber (better table/layout handling)
+import pdfplumber
+with pdfplumber.open("course.pdf") as pdf:
+    text = "\n\n".join(page.extract_text() for page in pdf.pages)
+```
+
+#### PPT Extraction
+
+```python
+from pptx import Presentation
+prs = Presentation("slides.pptx")
+text = "\n\n".join(
+    f"Slide {i+1}: " + " ".join(
+        shape.text for shape in slide.shapes if hasattr(shape, "text")
+    )
+    for i, slide in enumerate(prs.slides)
+)
+```
+
+#### Webhook Payload
+
+```json
+{
+  "event": "publish",
+  "org_id": "org-wragby",
+  "entity": {
+    "id": "lesson-pdf-123",
+    "title": "Introduction to Python",
+    "contentType": "pdf",
+    "content": "<full extracted text from all pages/slides>"
+  }
+}
+```
+
+The worker handles the rest — chunking, embedding, and storing.
+
+### Chunking Strategy
+
+| Content Type | How It's Chunked | How Citations Work |
+|-------------|-----------------|-------------------|
+| **Video** | Transcript split at ~2000 chars, sentence boundaries | `[Title]` — since videos are continuous |
+| **PDF** | Text split at ~2000 chars, sentence boundaries | `[Title, Page X]` — page number from metadata |
+| **PPT** | Each slide's text is typically small enough to be 1 chunk | `[Title, Slide X]` — slide number from metadata |
+
+**For long PDF pages** (dense text >2000 chars): the worker splits the page into multiple chunks, all tagged with the same page number. So a 4000-char page becomes 2 chunks, both showing `Page 5`.
+
+### LMS Responsibilities vs Worker Responsibilities
+
+| Task | Who | Why |
+|------|-----|-----|
+| Extract text from PDF/PPT | **LMS Backend** | Python has mature PDF libraries (PyPDF2, pdfplumber); JS PDF parsing is fragile and bloats the worker |
+| Segment by page/slide | **LMS Backend** | The LMS knows the document structure; the worker only sees raw text |
+| Chunk text for embedding | **Worker** | Already built — splits at sentence boundaries, handles Vectorize metadata limits |
+| Embed & store vectors | **Worker** | Uses Cloudflare Workers AI (bge-large-en-v1.5) |
+| Query & cite | **Worker (tutor)** | Searches Vectorize, builds grounded prompts, returns citations |
+
+### Citation Format by Content Type
+
+When the learner asks a question, the tutor returns citations in this format:
+
+```json
+{
+  "answer": "List comprehensions... [Introduction to Python, Page 12]",
+  "citations": [
+    {
+      "source_title": "Introduction to Python",
+      "source_type": "pdf",
+      "location": "Page 12",
+      "excerpt": "List comprehensions provide a concise way...",
+      "score": 0.91
+    }
+  ]
+}
+```
+
+| Content Type | `source_type` | `location` |
+|-------------|--------------|------------|
+| Video | `"video"` | `null` (continuous media) |
+| PDF | `"pdf"` | `"Page X"` |
+| PPT | `"ppt"` | `"Slide X"` |
+| Text lesson | `"text"` | `null` |
+
+### Implementation Checklist
+
+- [ ] **LMS Backend:** Add PDF extraction with PyPDF2 or pdfplumber
+- [ ] **LMS Backend:** Add PPT extraction with python-pptx
+- [ ] **LMS Backend:** Send extracted text as `entity.content` in the `/index` webhook
+- [ ] **ai-indexing Worker:** Read `entity.content` if present (fallback to `buildMetadataContent`)
+- [ ] **ai-indexing Worker:** Store `content_type` in Vectorize metadata
+- [ ] **ai-tutor Worker:** Include `source_type` and `location` in citation response
+- [ ] **ai-tutor Worker:** Format page/slide numbers in LLM prompt context
 
 ---
 
