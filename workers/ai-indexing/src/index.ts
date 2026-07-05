@@ -206,6 +206,16 @@ export default {
       return handleDiagDeindex(lessonId, env);
     }
 
+    // GET /diag-extract?key=... — diagnostic: extract PDF from R2
+    if (req.method === "GET" && path === "/diag-extract") {
+      return handleDiagExtract(url, env);
+    }
+
+    // GET /r2-list — diagnostic: list R2 objects
+    if (req.method === "GET" && path === "/r2-list") {
+      return handleR2List(url, env);
+    }
+
     // GET /env-check — diagnostic: list env vars
     if (req.method === "GET" && path === "/env-check") {
       return handleEnvCheck(env);
@@ -276,6 +286,21 @@ export default {
 // ════════════════════════════════════════════════════════
 //  Diagnostic Handlers
 // ════════════════════════════════════════════════════════
+
+async function handleR2List(url: URL, env: Env): Promise<Response> {
+  const prefix = url.searchParams.get("prefix") || "";
+  try {
+    const objects = await env.LMS_CONTENT.list({ prefix, limit: 50 });
+    const items = objects.objects.map((o: any) => ({
+      key: o.key,
+      size: o.size,
+      uploaded: o.uploaded,
+    }));
+    return Response.json({ count: items.length, prefix, objects: items });
+  } catch (err: any) {
+    return Response.json({ error: err.message }, { status: 500 });
+  }
+}
 
 async function handleEnvCheck(env: Env): Promise<Response> {
   const keys = Object.keys(env);
@@ -351,6 +376,32 @@ async function handleDiagDeindex(lessonId: string, env: Env): Promise<Response> 
   return handleDeindex({ entity: { id: lessonId } } as any, env);
 }
 
+async function handleDiagExtract(url: URL, env: Env): Promise<Response> {
+  const key = url.searchParams.get("key") || "";
+  const title = url.searchParams.get("title") || url.searchParams.get("key") || "Untitled";
+  const lessonId = url.searchParams.get("lesson_id") || key.split("/").pop()?.replace(/\.pdf$/, "") || "unknown";
+  const orgId = url.searchParams.get("org_id") || "dev-org";
+  const preview = url.searchParams.get("preview");
+
+  if (preview === "1") {
+    // Return extracted text directly (no queue, no indexing)
+    try {
+      const pdfObj = await env.LMS_CONTENT.get(key);
+      if (!pdfObj) return Response.json({ error: "file_not_found" }, { status: 404 });
+      const pdfBytes = await pdfObj.arrayBuffer();
+      let text = await extractTextFromPdfBufferAsync(pdfBytes);
+      if (!text || text.trim().length < 10) {
+        text = extractTextFromPdfBuffer(pdfBytes);
+      }
+      return Response.json({ key, chars: text.length, preview: text.substring(0, 1000) });
+    } catch (err: any) {
+      return Response.json({ error: err.message }, { status: 500 });
+    }
+  }
+
+  return handleExtractPdf({ r2Key: key, lesson_id: lessonId, title, org_id: orgId }, env);
+}
+
 // ════════════════════════════════════════════════════════
 //  POST /extract-pdf — Fetch PDF from R2, extract, queue
 // ════════════════════════════════════════════════════════
@@ -375,14 +426,17 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
     }
 
     const pdfBytes = await pdfObj.arrayBuffer();
-    const decoder = new TextDecoder();
     
     // 2. Extract text based on file type
     let fullText: string;
     const key = body.r2Key.toLowerCase();
     
     if (key.endsWith(".pdf")) {
-      fullText = extractTextFromPdfBuffer(pdfBytes);
+      fullText = await extractTextFromPdfBufferAsync(pdfBytes);
+      // Fallback: if unpdf produced nothing, try regex
+      if (!fullText || fullText.trim().length < 10) {
+        fullText = extractTextFromPdfBuffer(pdfBytes);
+      }
     } else if (key.endsWith(".pptx") || key.endsWith(".ppt")) {
       fullText = extractTextFromPptxBuffer(pdfBytes);
     } else if (key.endsWith(".txt") || key.endsWith(".md")) {
@@ -427,35 +481,81 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
   }
 }
 
-/** Best-effort text extraction from PDF binary. */
+/** Extract text from PDF using unpdf (Workers-compatible, handles compression). */
+async function extractTextFromPdfBufferAsync(buffer: ArrayBuffer): Promise<string> {
+  try {
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const { text } = await extractText(pdf, { mergePages: true });
+    return (typeof text === "string" ? text : text.join("\n")).trim();
+  } catch (err: any) {
+    console.error(`unpdf extraction failed: ${err.message}`);
+    return "";
+  }
+}
+
+/** Sync fallback — regex extraction for uncompressed PDFs. */
 function extractTextFromPdfBuffer(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  const decoder = new TextDecoder();
-  const text = decoder.decode(bytes);
+  try {
+    // pdf-parse is async but we need sync for the worker handler.
+    // Workers support top-level await, so we use it inside an async wrapper.
+    // For now, strip PDF syntax and extract readable fragments.
+    const bytes = new Uint8Array(buffer);
+    const decoder = new TextDecoder();
+    const raw = decoder.decode(bytes);
 
-  // Try to find stream objects (PDF text is in BT/ET blocks)
-  const btPattern = /BT\s*\n([\s\S]*?)\nET/g;
-  const textBlocks: string[] = [];
-  let match;
-  while ((match = btPattern.exec(text)) !== null) {
-    // Extract text from Tj, TJ, ' operators
-    const block = match[1];
-    const tjPattern = /\(([^)]*)\)\s*Tj/g;
-    let tjMatch;
-    while ((tjMatch = tjPattern.exec(block)) !== null) {
-      textBlocks.push(tjMatch[1]);
+    // Strategy 1: Try to find text between parentheses followed by Tj operator
+    // This catches text in uncompressed PDFs: (Hello) Tj
+    const tjPattern = /\(([^)]*(?:\\.[^)]*)*)\)\s*Tj/g;
+    const tjBlocks: string[] = [];
+    let match;
+    while ((match = tjPattern.exec(raw)) !== null) {
+      tjBlocks.push(match[1].replace(/\\(.)/g, "$1"));
     }
-  }
 
-  if (textBlocks.length > 0) {
-    return textBlocks.join(" ");
-  }
+    if (tjBlocks.length > 0) {
+      return tjBlocks.join(" ");
+    }
 
-  // Fallback: strip non-printable chars, keep readable text
-  return text
-    .replace(/[^\x20-\x7E\n\r\t]/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
+    // Strategy 2: Find text in TJ arrays: [(Hello) ( World)] TJ
+    const tjArrayPattern = /\[([^\]]*)\]\s*TJ/g;
+    const tjArrayBlocks: string[] = [];
+    while ((match = tjArrayPattern.exec(raw)) !== null) {
+      const inner = match[1];
+      const parenPattern = /\(([^)]*(?:\\.[^)]*)*)\)/g;
+      let parenMatch;
+      while ((parenMatch = parenPattern.exec(inner)) !== null) {
+        tjArrayBlocks.push(parenMatch[1].replace(/\\(.)/g, "$1"));
+      }
+    }
+
+    if (tjArrayBlocks.length > 0) {
+      return tjArrayBlocks.join(" ");
+    }
+
+    // Strategy 3: Fallback — strip all non-readable chars, keep sentences
+    // This catches text from decompressed streams that may have been decoded
+    const cleaned = raw
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, " ")  // control chars → space
+      .replace(/[^\x20-\x7E\n\r\t]/g, " ")             // non-ASCII → space
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Extract only plausible English sentences (3+ words with spaces)
+    const sentencePattern = /[A-Z][a-z]+(?:\s+[a-z]{2,}){2,}[.!?]/g;
+    const sentences: string[] = [];
+    while ((match = sentencePattern.exec(cleaned)) !== null) {
+      sentences.push(match[0]);
+    }
+
+    if (sentences.length > 0) {
+      return sentences.join(" ");
+    }
+
+    return cleaned.substring(0, 5000);  // give whatever we can
+  } catch {
+    return "";
+  }
 }
 
 /** Best-effort text extraction from PPTX buffer. */
