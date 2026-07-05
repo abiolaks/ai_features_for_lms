@@ -1,7 +1,6 @@
 # LMS API Contract — AI Workers
 
-> For the LMS Backend Team. What the AI Workers need from the LMS REST API.
-> 
+> For the LMS Backend Team. What you need to build, what we expose, and how to connect them.
 
 ```
 LMS_WEBHOOK_SECRET=**********************
@@ -12,10 +11,60 @@ LMS_WEBHOOK_SECRET=**********************
 | # | Action |
 |---|--------|
 | 1 | **Give the AI team:** your `LMS_GATEWAY_URL` + pick an `LMS_INTERNAL_KEY` and share it |
-| 2 | **Receive from the AI team:** the `LMS_WEBHOOK_SECRET` — use it when calling AI Worker(ai-index worker) |
+| 2 | **Receive from the AI team:** the `LMS_WEBHOOK_SECRET` — use it when calling the `ai-indexing` Worker |
 | 3 | **Build 3 P0 endpoints:** `GET /v1/learner/profile`, `GET /v1/catalog`, `GET /v1/progress/user` |
 | 4 | **Add auth middleware:** validate `X-API-Key` header against `LMS_INTERNAL_KEY` on these endpoints |
 | 5 | **Call the webhook:** `POST /index` on `ai-indexing` Worker when a lesson is published/updated (see below) |
+
+## Quick Test — Verify Everything Works
+
+Once you have both secrets, run these to verify connectivity:
+
+```bash
+# 1. Publish a video lesson (returns instantly — 202 Accepted)
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/index \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: $LMS_WEBHOOK_SECRET" \
+  -d '{
+    "event": "publish",
+    "org_id": "org-wragby",
+    "entity": {
+      "id": "lesson-001",
+      "title": "Getting Started",
+      "contentType": "video",
+      "cloudflareVideoId": "<your-stream-video-id>",
+      "streamStatus": "ready",
+      "course_id": "course-001"
+    }
+  }'
+
+# 2. Ask the tutor a question (HTTP)
+curl -X POST https://ai-tutor.yomi-alarape.workers.dev/tutor/ask \
+  -H "Content-Type: application/json" \
+  -d '{
+    "question": "What is this lesson about?",
+    "learner_id": "learner-42",
+    "lesson_id": "lesson-001",
+    "course_id": "course-001",
+    "org_id": "org-wragby"
+  }'
+
+# 3. Unpublish a lesson
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/deindex \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: $LMS_WEBHOOK_SECRET" \
+  -d '{
+    "event": "unpublish",
+    "org_id": "org-wragby",
+    "entity": { "id": "lesson-001" }
+  }'
+
+# 4. Backfill — re-index all Stream videos
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/backfill \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: $LMS_WEBHOOK_SECRET" \
+  -d '{"org_id": "org-wragby"}'
+```
 
 ---
 
@@ -439,6 +488,78 @@ Content-Type: application/json
 
 ---
 
+### GET /tutor/ws — WebSocket Streaming (recommended for production)
+
+Opens a persistent WebSocket connection for real-time token streaming. Words appear as the LLM generates them — no spinner, no waiting.
+
+```
+wss://ai-tutor.yomi-alarape.workers.dev/tutor/ws?learner_id=user-42
+```
+
+> **Query param:** `learner_id` — routes to the correct Durable Object session. Same value as HTTP `learner_id`.
+
+#### Protocol
+
+| Direction | Message | When |
+|-----------|---------|------|
+| Client → Server | `{"type":"ask","question":"...","lesson_id":"...","course_id":"...","org_id":"..."}` | Ask a question |
+| Server → Client | `{"type":"citations","citations":[{...}]}` | Sources found (sent before streaming starts — show these in the UI immediately) |
+| Server → Client | `{"type":"token","text":"Jira"}` | Each word as the LLM generates it |
+| Server → Client | `{"type":"done","answer":"...","history_length":4}` | Stream complete, exchange saved to SQLite |
+| Client → Server | `{"type":"cancel"}` | Stop generation (stub — not yet implemented) |
+| Server → Client | `{"type":"error","error":"..."}` | Any error |
+
+#### JavaScript Example
+
+```javascript
+const ws = new WebSocket(
+  `wss://ai-tutor.yomi-alarape.workers.dev/tutor/ws?learner_id=${learnerId}`
+);
+
+ws.onopen = () => {
+  ws.send(JSON.stringify({
+    type: "ask",
+    question: "What is this lesson about?",
+    lesson_id: currentLessonId,
+    course_id: currentCourseId,
+    org_id: currentOrgId
+  }));
+};
+
+ws.onmessage = (event) => {
+  const data = JSON.parse(event.data);
+  switch (data.type) {
+    case "citations":
+      // Show source list immediately
+      showCitations(data.citations);
+      break;
+    case "token":
+      // Append each word as it arrives — feels like ChatGPT
+      appendToken(data.text);
+      break;
+    case "done":
+      // Answer complete, history_length updated
+      console.log("Done. Messages in session:", data.history_length);
+      break;
+    case "error":
+      showError(data.error);
+      break;
+  }
+};
+```
+
+#### When to use WebSocket vs HTTP
+
+| Use WebSocket when | Use HTTP when |
+|--------------------|--------------|
+| Real-time tutor widget in lesson view | Simple integration, testing, or curl debugging |
+| User expects streaming responses | You don't want to manage WebSocket connections |
+| Production frontend | Backward compatibility |
+
+**HTTP and WebSocket share the same Durable Object** — conversation history persists across both. A question sent via HTTP will be remembered when the user reconnects via WebSocket.
+
+---
+
 ## LMS → AI Worker Webhook
 
 The LMS calls the AI Indexing Worker whenever a lesson is published or unpublished.
@@ -464,6 +585,28 @@ Call `POST /index` when:
 - A new lesson is published
 - An existing lesson's content is updated (title, video, description)
 - A lesson's `streamStatus` changes from `"pending"` to `"ready"`
+
+### Architecture: Async Queue (indexing is not instant)
+
+`POST /index` pushes work to a Cloudflare Queue. The LMS gets a **202 Accepted** response immediately (sub-100ms). The Worker's queue consumer picks up the job, fetches VTT, generates embeddings, and upserts to Vectorize in the background.
+
+```
+LMS:   POST /index ──▶ 202 Accepted (instant!)
+                        │
+                        ▼
+                 ┌─────────────────┐
+                 │  indexing-jobs  │
+                 │  Queue          │
+                 │  ┌───────────┐  │
+                 │  │ job-1     │──┼──▶ Worker picks up
+                 │  │ job-2     │  │    → Fetch VTT
+                 │  │ job-3     │  │    → Chunk + Embed
+                 │  └───────────┘  │    → Upsert Vectorize
+                 │  batch_size=3   │    → Retry 3x on failure
+                 └─────────────────┘
+```
+
+**Implication for the LMS:** The 202 response means the job was accepted, NOT that it finished processing. There is no callback. If a video fails to index (bad captions, Vectorize error), it will be retried automatically up to 3 times. Check the `ai-indexing` Worker logs via Cloudflare Dashboard if you need to verify indexing status.
 
 ### Publish a lesson
 
@@ -506,15 +649,37 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/deindex \
 
 | Scenario | Status | Body |
 |----------|--------|------|
-| Successfully indexed | `200` | `{ "status": "indexed", "transcript_source": "existing", "content_length": 815 }` |
-| Video not ready yet | `202` | `{ "status": "queued", "reason": "video_not_ready" }` |
+| Job accepted (queued) | `202` | `{ "status": "queued", "message": "Indexing job for lesson-abc123 accepted" }` |
+| Video not ready yet (pushed to queue anyway, returns instantly) | `202` | `{ "status": "queued" }` |
 | Missing field | `400` | `{ "error": "Missing org_id" }` |
-| Video processed but no captions | `200` | `{ "status": "indexed", "transcript_source": "none", "content_length": 0 }` |
+| Invalid webhook secret | `401` | `{ "error": "Unauthorized — invalid or missing X-Webhook-Secret" }` |
+| Successfully deindexed | `200` | `{ "status": "deindexed", "vectors_removed": 3 }` |
+| Backfill accepted | `200` | `{ "status": "queued", "queued": 7, "skipped": 2 }` |
 
 **Retry logic for the LMS:**
-- `202 video_not_ready` → call `/index` again when `streamStatus` becomes `"ready"`
-- Any `5xx` → retry with exponential backoff (1s, 2s, 4s, max 3 attempts)
-- `4xx` → do not retry, fix the request
+- All `/index` calls return `202` instantly — the queue handles retries internally (3 attempts)
+- Any `4xx` (400, 401) → do not retry, fix the request
+- Any `5xx` (rare) → retry with exponential backoff (1s, 2s, 4s, max 3 attempts)
+- **Do not re-send `/index` for the same lesson** thinking it failed — the queue may still be processing it
+
+### POST /backfill — Re-index all Stream videos
+
+Bulk re-indexes every ready video in Cloudflare Stream. Pushes one queue job per video.
+
+```bash
+curl -X POST https://ai-indexing.yomi-alarape.workers.dev/backfill \
+  -H "Content-Type: application/json" \
+  -H "X-Webhook-Secret: <shared-secret>" \
+  -d '{"org_id": "org-wragby"}'
+```
+
+**Response (200):**
+```json
+{ "status": "queued", "queued": 7, "skipped": 2 }
+```
+
+- `queued`: number of videos pushed to the indexing queue
+- `skipped`: videos with `status !== "ready"` (pending upload, processing)
 
 ---
 
