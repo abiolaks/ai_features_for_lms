@@ -1,44 +1,36 @@
 // ============================================================
 // AI04: Grounded Q&A Tutor
 // ============================================================
-// Learner asks a question about video lesson content →
+// Learner asks a question about lesson content →
 // AI answers with citations grounded in real transcripts.
+// Conversation history persisted per-session via Durable Objects.
 // ============================================================
+
+import { TutorSession } from "./TutorSession";
+
+export { TutorSession };
 
 export interface Env {
   AI: any;
   VECTORIZE_INDEX: VectorizeIndex;
   AI_GATEWAY: Fetcher;
+  TUTOR_SESSION: DurableObjectNamespace<TutorSession>;
 }
 
 // ──── Constants ────
 
-const EMBEDDING_MODEL = "@cf/qwen/qwen3-embedding-0.6b";
-const SCORE_THRESHOLD = 0.1;
-const TOP_K = 5;
-const EXCERPT_MAX_LEN = 300;
+const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
 
 // ──── Types ────
 
 interface AskRequest {
   question: string;
+  learner_id: string;        // NEW — routes to the right DO
   lesson_id: string;
   course_id: string;
   org_id: string;
   expand_scope?: "lesson" | "module" | "course";
   module_id?: string;
-}
-
-interface Citation {
-  lesson_title: string;
-  excerpt: string;
-  score: number;
-}
-
-interface AskResponse {
-  answer: string;
-  citations: Citation[];
-  scope_expansion_suggested: boolean;
 }
 
 // ════════════════════════════════════════════════════════
@@ -47,126 +39,98 @@ interface AskResponse {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url);
+    const path = url.pathname;
+
+    // GET /diag-search?q=... — raw Vectorize query (dev diagnostic)
+    if (req.method === "GET" && path === "/diag-search") {
+      return handleDiagSearch(url, env);
+    }
+
+    // GET /tutor/ws?learner_id=... — WebSocket upgrade (streaming tutor)
+    if (req.method === "GET" && path === "/tutor/ws") {
+      const learnerId = url.searchParams.get("learner_id");
+      if (!learnerId) {
+        return json({ error: "missing_param: learner_id" }, 400);
+      }
+      const session = env.TUTOR_SESSION.get(
+        env.TUTOR_SESSION.idFromName(`session-${learnerId}`)
+      );
+      // Forward to DO's fetch() which handles the WebSocket upgrade
+      return session.fetch(
+        new Request(`https://dummy/ws`, {
+          headers: req.headers,
+        })
+      );
+    }
+
     if (req.method !== "POST") {
       return json({ error: "Method not allowed" }, 405);
     }
 
-    const url = new URL(req.url);
-    if (url.pathname !== "/tutor/ask") {
-      return json({ error: "Not found" }, 404);
+    // POST /tutor/clear — clear a session's history
+    if (path === "/tutor/clear") {
+      let body: { learner_id: string };
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: "Invalid JSON" }, 400);
+      }
+      if (!body.learner_id) {
+        return json({ error: "missing_field: learner_id" }, 400);
+      }
+      const session = env.TUTOR_SESSION.get(
+        env.TUTOR_SESSION.idFromName(`session-${body.learner_id}`)
+      );
+      return session.clearHistory();
     }
 
-    let body: AskRequest;
-    try {
-      body = await req.json();
-    } catch {
-      return json({ error: "Invalid JSON" }, 400);
+    // POST /tutor/ask — route to the learner's DO
+    if (path === "/tutor/ask") {
+      let body: AskRequest;
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: "Invalid JSON" }, 400);
+      }
+
+      if (!body.question) return json({ error: "missing_field: question" }, 400);
+      if (!body.learner_id) return json({ error: "missing_field: learner_id" }, 400);
+      if (!body.lesson_id) return json({ error: "missing_field: lesson_id" }, 400);
+      if (!body.org_id) return json({ error: "missing_field: org_id" }, 400);
+
+      // Deterministic routing: same learner → same DO instance
+      const session = env.TUTOR_SESSION.get(
+        env.TUTOR_SESSION.idFromName(`session-${body.learner_id}`)
+      );
+      return session.ask(body);
     }
 
-    return handleAsk(body, env);
+    return json({ error: "Not found" }, 404);
   },
 };
 
 // ════════════════════════════════════════════════════════
-//  POST /tutor/ask
+//  GET /diag-search?q=... — Raw Vectorize diagnostic
 // ════════════════════════════════════════════════════════
 
-async function handleAsk(body: AskRequest, env: Env): Promise<Response> {
-  // ── Validation ──
-  if (!body.question || typeof body.question !== "string") {
-    return json({ error: "missing_field: question" }, 400);
-  }
-  if (!body.lesson_id) {
-    return json({ error: "missing_field: lesson_id" }, 400);
-  }
-  if (!body.org_id) {
-    return json({ error: "missing_field: org_id" }, 400);
-  }
-
-  // ── LMS_INTEGRATION: Fetch lesson metadata ──
-  // TODO: When the LMS API is live, fetch lesson metadata here
-  // to enrich citations with full title, description, etc.
-  //
-  //   const resp = await fetch(
-  //     `${env.LMS_GATEWAY_URL}/api/v1/lessons/${body.lesson_id}`,
-  //     { headers: { "X-API-Key": env.LMS_INTERNAL_KEY } }
-  //   );
-  //   const lessonMeta = await resp.json();
-  //
-  // Currently: metadata comes from Vectorize results (stored at index time).
-  // Secrets to create: LMS_GATEWAY_URL, LMS_INTERNAL_KEY (via wrangler secret put)
-
+async function handleDiagSearch(url: URL, env: Env): Promise<Response> {
+  const q = url.searchParams.get("q") || "test";
   try {
-    // 1. Embed the question
-    const embedding = await env.AI.run(EMBEDDING_MODEL, { text: body.question });
+    const embedding = await env.AI.run(EMBEDDING_MODEL, { text: q });
     const vector: number[] = embedding.data?.[0] ?? embedding;
-
-    // 2. Build Vectorize filter based on scope (used for post-filter fallback)
-    const filter = buildFilter(body);
-
-    // 3. Query Vectorize (without metadata filter until indexes propagate)
     const results = await env.VECTORIZE_INDEX.query(vector, {
-      topK: TOP_K,
+      topK: 10,
       returnMetadata: true,
-      // filter,  // Uncomment when metadata indexes are fully propagated
     });
-
-    // 4. Post-filter by scope + score threshold
-    // TODO: Remove post-filter when Vectorize metadata filter is reliable
-    const matches = (results.matches || [])
-      .filter((m: any) => {
-        if (m.score < SCORE_THRESHOLD) return false;
-        // Metadata filter fallback
-        for (const [key, val] of Object.entries(filter)) {
-          if (m.metadata?.[key] !== val) return false;
-        }
-        return true;
-      });
-
-    if (matches.length === 0) {
-      return json({
-        answer: "I couldn't find that in this lesson.",
-        citations: [],
-        scope_expansion_suggested: true,
-      });
-    }
-
-    // 5. Build grounded prompt
-    const citations: Citation[] = matches.map((m: any) => ({
-      lesson_title: m.metadata?.title || "Untitled",
-      excerpt: (m.metadata?.content || "").substring(0, EXCERPT_MAX_LEN),
+    const matches = (results.matches || []).map((m: any) => ({
+      id: m.id,
       score: m.score,
+      metadata: m.metadata,
     }));
-
-    const prompt = buildPrompt(citations, body.question);
-
-    // 6. Call AI03 Gateway
-    const gatewayResp = await env.AI_GATEWAY.fetch(
-      new Request("https://ai-gateway/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: prompt }],
-          tier: "standard",
-          org_id: body.org_id,
-        }),
-      })
-    );
-
-    if (!gatewayResp.ok) {
-      const err = await gatewayResp.text();
-      return json({ error: `AI Gateway error: ${err}` }, 502);
-    }
-
-    const llm = await gatewayResp.json() as any;
-
-    return json({
-      answer: llm.response,
-      citations,
-      scope_expansion_suggested: false,
-    });
+    return json({ query: q, total: matches.length, vector_dim: vector.length, matches });
   } catch (err: any) {
-    return json({ error: `Tutor error: ${err.message}` }, 500);
+    return json({ error: err.message }, 500);
   }
 }
 
@@ -174,47 +138,6 @@ async function handleAsk(body: AskRequest, env: Env): Promise<Response> {
 //  Helpers
 // ════════════════════════════════════════════════════════
 
-/** Build Vectorize metadata filter based on scope. */
-function buildFilter(body: AskRequest): Record<string, string> {
-  const scope = body.expand_scope || "lesson";
-  const filter: Record<string, string> = { org_id: body.org_id };
-
-  switch (scope) {
-    case "lesson":
-      filter["lesson_id"] = body.lesson_id;
-      break;
-    case "module":
-      if (body.module_id) filter["module_id"] = body.module_id;
-      filter["course_id"] = body.course_id;
-      break;
-    case "course":
-      filter["course_id"] = body.course_id;
-      break;
-  }
-
-  return filter;
-}
-
-/** Build the grounded prompt that forces the LLM to use only provided content. */
-function buildPrompt(citations: Citation[], question: string): string {
-  const contentBlocks = citations
-    .map((c) => `[Lesson: ${c.lesson_title}]
-${c.excerpt}`)
-    .join("\n\n");
-
-  return [
-    "Answer the question based on the provided content below.",
-    "If the content is irrelevant to the question, say \"I couldn't find that in this lesson.\"",
-    "Cite the lesson title for each fact. Be concise.",
-    "",
-    "CONTENT:",
-    contentBlocks,
-    "",
-    `QUESTION: ${question}`,
-  ].join("\n");
-}
-
-/** Tiny JSON helper. */
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
