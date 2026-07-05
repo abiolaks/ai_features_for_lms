@@ -9,6 +9,13 @@
 
   "stream": { "binding": "STREAM" },
 
+  "r2_buckets": [
+    {
+      "binding": "LMS_CONTENT",
+      "bucket_name": "lms-content-staging"
+    }
+  ],
+
   "vectorize": [
     {
       "binding": "VECTORIZE_INDEX",

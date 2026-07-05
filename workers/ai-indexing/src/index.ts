@@ -14,6 +14,7 @@ export interface Env {
   CLOUDFLARE_STREAM_API_TOKEN: string;
   CLOUDFLARE_ACCOUNT_ID: string;
   LMS_WEBHOOK_SECRET: string;
+  LMS_CONTENT: R2Bucket;
 }
 
 // ──── Constants ────
@@ -237,6 +238,10 @@ export default {
           message: `Indexing job for ${body.entity?.id || "unknown"} accepted`,
         }, { status: 202 });
 
+      case "/extract-pdf":
+        // Fetch PDF from R2, extract text, queue for indexing
+        return handleExtractPdf(body, env);
+
       case "/deindex":
         return handleDeindex(body, env);
 
@@ -347,6 +352,131 @@ async function handleDiagDeindex(lessonId: string, env: Env): Promise<Response> 
 }
 
 // ════════════════════════════════════════════════════════
+//  POST /extract-pdf — Fetch PDF from R2, extract, queue
+// ════════════════════════════════════════════════════════
+
+interface ExtractPdfRequest {
+  r2Key: string;
+  lesson_id: string;
+  title: string;
+  org_id: string;
+}
+
+async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Response> {
+  if (!body.r2Key) return Response.json({ error: "Missing r2Key" }, { status: 400 });
+  if (!body.lesson_id) return Response.json({ error: "Missing lesson_id" }, { status: 400 });
+  if (!body.org_id) return Response.json({ error: "Missing org_id" }, { status: 400 });
+
+  try {
+    // 1. Fetch PDF from R2
+    const pdfObj = await env.LMS_CONTENT.get(body.r2Key);
+    if (!pdfObj) {
+      return Response.json({ error: "file_not_found", key: body.r2Key }, { status: 404 });
+    }
+
+    const pdfBytes = await pdfObj.arrayBuffer();
+    const decoder = new TextDecoder();
+    
+    // 2. Extract text based on file type
+    let fullText: string;
+    const key = body.r2Key.toLowerCase();
+    
+    if (key.endsWith(".pdf")) {
+      fullText = extractTextFromPdfBuffer(pdfBytes);
+    } else if (key.endsWith(".pptx") || key.endsWith(".ppt")) {
+      fullText = extractTextFromPptxBuffer(pdfBytes);
+    } else if (key.endsWith(".txt") || key.endsWith(".md")) {
+      fullText = decoder.decode(new Uint8Array(pdfBytes));
+    } else {
+      // Unknown format — try as plain text
+      fullText = decoder.decode(new Uint8Array(pdfBytes));
+    }
+
+    if (!fullText || fullText.trim().length < 10) {
+      return Response.json({
+        error: "no_extractable_text",
+        key: body.r2Key,
+        hint: "PDF may be scanned (needs OCR) or contain only images. Pre-extract text with PyPDF2 and send via entity.content in /index.",
+      }, { status: 422 });
+    }
+
+    console.log(`[extract-pdf] ${body.title}: ${fullText.length} chars from "${body.r2Key}"`);
+
+    // 3. Queue for indexing (same pipeline as videos)
+    await env.INDEXING_QUEUE.send({
+      event: "publish",
+      org_id: body.org_id,
+      entity: {
+        id: body.lesson_id,
+        title: body.title,
+        contentType: key.endsWith(".pptx") ? "ppt" : "pdf",
+        content: fullText,
+        durationSeconds: fullText.length,
+      },
+    });
+
+    return Response.json({
+      status: "queued",
+      chars: fullText.length,
+      message: `Extracted ${fullText.length} chars, queued for indexing`,
+    }, { status: 202 });
+
+  } catch (err: any) {
+    console.error(`[extract-pdf] error: ${err.message}`);
+    return Response.json({ error: `extraction_failed: ${err.message}` }, { status: 500 });
+  }
+}
+
+/** Best-effort text extraction from PDF binary. */
+function extractTextFromPdfBuffer(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder();
+  const text = decoder.decode(bytes);
+
+  // Try to find stream objects (PDF text is in BT/ET blocks)
+  const btPattern = /BT\s*\n([\s\S]*?)\nET/g;
+  const textBlocks: string[] = [];
+  let match;
+  while ((match = btPattern.exec(text)) !== null) {
+    // Extract text from Tj, TJ, ' operators
+    const block = match[1];
+    const tjPattern = /\(([^)]*)\)\s*Tj/g;
+    let tjMatch;
+    while ((tjMatch = tjPattern.exec(block)) !== null) {
+      textBlocks.push(tjMatch[1]);
+    }
+  }
+
+  if (textBlocks.length > 0) {
+    return textBlocks.join(" ");
+  }
+
+  // Fallback: strip non-printable chars, keep readable text
+  return text
+    .replace(/[^\x20-\x7E\n\r\t]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Best-effort text extraction from PPTX buffer. */
+function extractTextFromPptxBuffer(buffer: ArrayBuffer): string {
+  // PPTX is a ZIP file containing XML. Extract text from XML.
+  const bytes = new Uint8Array(buffer);
+  const decoder = new TextDecoder();
+  const text = decoder.decode(bytes);
+
+  // PPTX stores text in <a:t> elements
+  const textPattern = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+  const fragments: string[] = [];
+  let match;
+  while ((match = textPattern.exec(text)) !== null) {
+    if (match[1].trim()) fragments.push(match[1].trim());
+  }
+
+  return fragments.join(" ");
+}
+
+// ════════════════════════════════════════════════════════
 //  POST /index — Publish handler
 // ════════════════════════════════════════════════════════
 
@@ -388,8 +518,8 @@ async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
     return handleVideoIndex(entity, org_id, env);
   }
 
-  // ── Text lesson — metadata-only ──
-  const content = buildMetadataContent(entity);
+  // ── Text lesson — use extracted content if provided ──
+  const content = entity.content || buildMetadataContent(entity);
   try {
     const { chunks, content_length } = await embedAndUpsert(env, org_id, entity, content, "none");
     return Response.json({ status: "indexed", transcript_source: "none", content_length, chunks });

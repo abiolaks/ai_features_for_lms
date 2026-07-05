@@ -1,0 +1,29 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "pdf-extractor",
+  "main": "src/entry.py",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["python_workers"],
+
+  "r2_buckets": [
+    {
+      "binding": "LMS_CONTENT",
+      "bucket_name": "lms-content-staging"
+    }
+  ],
+
+  "vars": {
+    "INDEXING_URL": "https://ai-indexing.yomi-alarape.workers.dev"
+  },
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    }
+  }
+}
