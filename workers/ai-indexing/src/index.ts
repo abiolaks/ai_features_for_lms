@@ -230,13 +230,40 @@ export default {
 
     switch (path) {
       case "/index":
-        return handleIndex(body, env);
+        // Push to queue — returns instantly, consumer processes async
+        await env.INDEXING_QUEUE.send(body);
+        return Response.json({
+          status: "queued",
+          message: `Indexing job for ${body.entity?.id || "unknown"} accepted`,
+        }, { status: 202 });
+
       case "/deindex":
         return handleDeindex(body, env);
+
       case "/backfill":
         return handleBackfill(body, env);
+
       default:
         return Response.json({ error: "Not found" }, { status: 404 });
+    }
+  },
+
+  // ── Queue consumer: processes index jobs asynchronously ──
+  async queue(batch: MessageBatch<IndexJob>, env: Env): Promise<void> {
+    for (const msg of batch.messages) {
+      try {
+        console.log(`[queue] processing job for ${msg.body?.entity?.id || "unknown"}`);
+        const result = await handleIndex(msg.body, env);
+        if (result.status >= 400) {
+          console.error(`[queue] job failed with ${result.status}: ${await result.text()}`);
+          msg.retry({ delaySeconds: 5 });
+        } else {
+          msg.ack();
+        }
+      } catch (err: any) {
+        console.error(`[queue] job error: ${err.message}`);
+        msg.retry({ delaySeconds: 10 });
+      }
     }
   },
 };
@@ -519,8 +546,25 @@ async function handleBackfill(body: BackfillRequest, env: Env): Promise<Response
   let skipped = 0;
 
   for (const video of videos) {
-    if (video.status?.state === "ready") queued++;
-    else skipped++;
+    if (video.status?.state !== "ready") {
+      skipped++;
+      continue;
+    }
+
+    // Push each ready video as a separate queue job
+    await env.INDEXING_QUEUE.send({
+      event: "publish",
+      org_id: body.org_id,
+      entity: {
+        id: video.uid || video.id,
+        title: video.meta?.name || "Untitled",
+        contentType: "video",
+        cloudflareVideoId: video.uid || video.id,
+        streamStatus: "ready",
+        durationSeconds: Math.round(video.duration || 0),
+      },
+    });
+    queued++;
   }
 
   return Response.json({ status: "queued", queued, skipped });
