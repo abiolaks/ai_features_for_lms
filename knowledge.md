@@ -1,3 +1,54 @@
+## Session: — AI01: Queue-Based Indexing (Async Processing)
+
+**Context:** Previously, `POST /index` processed everything synchronously — fetch VTT, chunk, embed, upsert — all in one HTTP request. This took 5-70 seconds and risked 30s Worker timeout for long videos.
+
+**Change:** `/index` and `/backfill` now push to a Cloudflare Queue (`indexing-jobs`). The LMS gets `202 Accepted` instantly. A queue consumer processes jobs asynchronously with auto-retry.
+
+**Architecture:**
+```
+POST /index → env.INDEXING_QUEUE.send(body) → 202 Accepted (instant)
+                                                  │
+                                                  ▼
+                                           ┌─────────────────┐
+                                           │  indexing-jobs  │
+                                           │  Queue          │
+                                           │  batch_size=3   │
+                                           │  max_retries=3   │
+                                           └────────┬────────┘
+                                                    │ consumer picks up
+                                                    ▼
+                                           queue(batch, env) {
+                                             handleIndex(msg.body, env)
+                                             // retry on failure
+                                           }
+```
+
+**Queue Config:**
+- `max_batch_size`: 3 (up to 3 jobs processed concurrently)
+- `max_batch_timeout`: 60s
+- `max_retries`: 3 (auto-retry on failure)
+- Consumer: `ai-indexing` Worker's `queue()` export
+
+**What changed:**
+- `/index` fetch handler: `handleIndex(body, env)` → `env.INDEXING_QUEUE.send(body)` + 202
+- `/backfill`: now pushes all ready videos to queue (was just counting)
+- `queue()` export added: iterates batch.messages, calls handleIndex, acks/retries
+- `/deindex` stays synchronous (fast delete, no embedding)
+- Diagnostic `/diag-index` stays synchronous (dev convenience)
+
+**Implications:**
+- LMS gets instant response — no more waiting for caption generation
+- Long videos (20 min, 11 chunks) won't hit Worker 30s timeout
+- Failed embeddings retry automatically (Vectorize temporary errors recover)
+- Backfill processes videos in parallel (batch_size=3)
+- No callback to LMS when done — check Worker logs for status
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (queue() export, fetch handler changes)
+- `workers/ai-indexing/wrangler.jsonc` (consumer config)
+
+---
+
 ## Session: — AI04: WebSocket Streaming for Real-Time Tutor Responses
 
 **Question:** Does the ai-tutor have WebSocket streaming so words appear in real-time like ChatGPT?
