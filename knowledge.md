@@ -1,3 +1,149 @@
+## Session: — AI04: WebSocket Streaming for Real-Time Tutor Responses
+
+**Question:** Does the ai-tutor have WebSocket streaming so words appear in real-time like ChatGPT?
+
+**Answer — Before:** No. The tutor worked like email — send question, wait 3-8 seconds, get full answer. Learner stares at a spinner.
+
+**Answer — After:** Yes. Implemented end-to-end streaming from Workers AI → Gateway → Durable Object → WebSocket → Client.
+
+### Architecture
+
+```
+Client WebSocket                    ai-tutor Worker              ai-gateway Worker
+───────────────                     ──────────────               ─────────────────
+GET /tutor/ws?learner_id=X ──────▶ forward to DO ──▶ TutorSession.fetch()
+  ◀── 101 Upgrade ─────────────────────────────────── acceptWebSocket()
+  
+  {"type":"ask","question":"..."} ──▶ webSocketMessage()
+                                      │ embed → Vectorize
+                                      │ buildPrompt(history, citations)
+                                      │ POST /stream ──────────────▶ env.AI.run(stream:true)
+                                      │                              aiStreamToSSE()
+                                      │ ◀── SSE tokens ───────────── {type:"token",text:"..."}
+                                      │ ◀── SSE done ─────────────── {type:"done",...}
+  ◀── {"type":"citations",...} ────── send citations first
+  ◀── {"type":"token","text":"Jira"} ─ stream tokens
+  ◀── {"type":"token","text":" is"}
+  ◀── {"type":"token","text":" a"}
+  ◀── {"type":"done","history_length":4}
+                                      │ saveExchange(question, answer)
+```
+
+### Protocol
+
+| Direction | Message | When |
+|-----------|---------|------|
+| Client → Server | `{"type":"ask","question":"...","lesson_id":"...","course_id":"...","org_id":"..."}` | Ask a question |
+| Server → Client | `{"type":"citations","citations":[{...}]}` | Sources found (sent before streaming starts) |
+| Server → Client | `{"type":"token","text":"word"}` | Each token as LLM generates it |
+| Server → Client | `{"type":"done","answer":"...","history_length":N}` | Stream complete, exchange saved |
+| Client → Server | `{"type":"cancel"}` | Stop generation (stub — not yet interrupting stream) |
+| Server → Client | `{"type":"error","error":"..."}` | Any error |
+
+### Streaming Pipeline
+
+1. **Gateway (`POST /stream`):** Calls Workers AI with `stream: true`. Returns a `ReadableStream`. The `aiStreamToSSE()` transform uses `stream.tee()` + `TransformStream` to:
+   - Side-reader accumulates full response + token count
+   - Main reader re-emits each Workers AI SSE chunk as `{"type":"token","text":"..."}`
+   - `flush()` sends `{"type":"done","response":"...","tokens_used":N}` and tracks tokens in D1
+
+2. **DO (`TutorSession.webSocketMessage`):** Receives `{"type":"ask"}`, does embedding + Vectorize search, builds prompt with conversation history, calls gateway `/stream` via service binding, reads the SSE stream, forwards each token through the WebSocket.
+
+3. **Worker (`GET /tutor/ws`):** Receives WebSocket upgrade, creates DO stub via `idFromName`, forwards to `session.fetch()` which handles the upgrade.
+
+### Backward Compatibility
+
+`POST /tutor/ask` (HTTP, non-streaming) still works — uses the same `buildGroundedPrompt()` shared helper. Returns full response as JSON with `history_length`.
+
+### Key Implementation Details
+
+- **Token accumulation:** The DO accumulates tokens during streaming, then saves the full exchange to SQLite on stream completion. If the stream errors, the partial answer is not saved.
+- **Citations first:** Sources are sent before tokens start streaming so the UI can show "Based on: LumeraUnit1, Jira_Tutorial" immediately.
+- **History management:** WebSocket and HTTP paths share the same `loadHistory()`/`saveExchange()` methods. History limit of 20 messages with auto-prune.
+- **`stream.tee()`:** Used in gateway to split the Workers AI stream — one branch for accumulation, one for client delivery. This avoids buffering the full response.
+
+### UX Implication
+
+Without streaming: 3-8 second spinner, feels broken. With streaming: words appear in ~500ms, feels like ChatGPT. Same total time, dramatically different perceived performance.
+
+**Related files:**
+- `workers/ai-gateway/src/index.ts` (`handleStream`, `aiStreamToSSE`)
+- `workers/ai-tutor/src/TutorSession.ts` (`fetch`, `webSocketMessage`, `handleStreamAsk`)
+- `workers/ai-tutor/src/index.ts` (WebSocket upgrade route)
+- `workers/ai-tutor/wrangler.jsonc` (DO binding + migration)
+
+---
+
+## Session: — Content Indexing Pipeline: Chunking, Embedding Model Fix, Stream Video Indexing
+
+**Context:** 9 videos in Cloudflare Stream, only 2 had captions. 5 had no captions (auto-generation works). The Jira tutorial (20 min) produced 21KB of transcript — too large for Vectorize metadata limit (10,240 bytes).
+
+**Embedding Model Dimension Mismatch:**
+- Vectorize index `lms-lessons` was created with 1024 dimensions
+- Code used `@cf/qwen/qwen3-embedding-0.6b` (384-dim)
+- Upserts were silently failing or producing garbage vectors
+- **Fix:** Switched to `@cf/baai/bge-large-en-v1.5` (1024-dim) in both `ai-indexing` and `ai-tutor`
+
+**Transcript Chunking:**
+- Vectorize metadata limit: 10,240 bytes per vector
+- Long transcripts (20 min video = 21KB) exceeded this
+- **Fix:** `chunkText()` splits content at ~2000 chars, breaking at sentence boundaries
+- Each chunk gets its own vector with `chunk_index`, `total_chunks`, shared `lesson_id`
+- Vector IDs: `lesson-{id}-chunk0`, `lesson-{id}-chunk1`, ...
+- `embedAndUpsert()` batches upserts in groups of 10 (Vectorize limit)
+- Pre-cleanup: deletes old vectors before re-indexing (batched `getByIds`, 20-ID limit)
+
+**Indexing Results:**
+| Video | Duration | Chunks | Source |
+|-------|----------|--------|--------|
+| Jira Tutorial | 20 min | 11 | existing captions |
+| LumeraUnit1 | 57s | 1 | existing captions |
+| AI Instructor | 10s | 1 | existing captions |
+| LumeraXCourse | 9 min | 4 | AI-generated captions |
+| LumeraX Avatar | 39s | 1 | AI-generated captions |
+| Animated logos ×2 | 8s | 1 each | AI-generated (minimal) |
+
+**Tutor adaptation:**
+- `TOP_K` increased from 5 → 15 (multi-chunk videos need more matches)
+- `EXCERPT_MAX_LEN` increased from 300 → 2000 (give LLM full chunk context)
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (`chunkText`, `embedAndUpsert`, `handleVideoIndex`)
+- `workers/ai-tutor/src/index.ts` (`TOP_K`, `EXCERPT_MAX_LEN`)
+
+---
+
+## Session: — PDF & PPT Content Indexing Spec (for Backend)
+
+**Question:** How will PDF and PPT courses be indexed? How do citations work for non-video content?
+
+**Answer:** LMS backend extracts text (Python PDF/PPT libraries), sends inline in webhook payload as `entity.content`. Worker chunks, embeds, stores with content type metadata. Tutor cites as `[Title, Page X]` or `[Title, Slide X]`.
+
+**Why not parse PDFs in the Worker:**
+- JS PDF parsing is fragile (complex layouts break)
+- No OCR support
+- bloats worker bundle (pdf-parse is ~1MB, 3MB limit)
+- Python has mature, reliable PDF libraries (PyPDF2, pdfplumber, python-pptx)
+
+**LMS responsibility:** Extract text with PyPDF2/pdfplumber (PDF) or python-pptx (PPT), send as `entity.content` in the `/index` webhook.
+
+**Worker responsibility:** Read `entity.content` (1-line change), chunk if needed, embed, store with `content_type: "pdf"`/`"ppt"` metadata.
+
+**Citation format:**
+```json
+{
+  "source_title": "Intro to Python",
+  "source_type": "pdf",
+  "location": "Page 12",
+  "excerpt": "List comprehensions provide...",
+  "score": 0.91
+}
+```
+
+**Full spec in:** `docs/lms-api-contract-for-backend.md` → "PDF & PPT Content Indexing" section.
+
+---
+
 ## Session: — AI06: Learning Paths — Observability Spans
 
 **What was implemented:**
