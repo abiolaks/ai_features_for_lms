@@ -295,7 +295,15 @@ export class TutorSession extends DurableObject<Env> {
       .filter((m: any) => {
         if (m.score < SCORE_THRESHOLD) return false;
         for (const [key, val] of Object.entries(filter)) {
-          if (m.metadata?.[key] !== val) return false;
+          if (!val) continue;  // skip empty filter values
+          const metaVal = m.metadata?.[key];
+          // org_id must always match exactly
+          if (key === "org_id") {
+            if (metaVal !== val) return false;
+          } else {
+            // course_id, module_id, lesson_id: skip if metadata is empty (unset)
+            if (metaVal && metaVal !== "" && metaVal !== val) return false;
+          }
         }
         return true;
       });
