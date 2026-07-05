@@ -243,6 +243,40 @@
 
 **Trade-off:** Tight coupling — workers must be deployed in the same Cloudflare account.
 
+### 9. PDF/PPT Extraction via unpdf in Worker (not LMS, not Python)
+
+**Decision:** Use `unpdf` (Workers-compatible PDF.js wrapper) directly in the `ai-indexing` Worker. PDFs are fetched from R2, extracted, and indexed — all in the Worker. No LMS extraction code needed.
+
+**Why:**
+- `unpdf` is purpose-built for Cloudflare Workers (1.4M weekly downloads, keywords: "cloudflare", "workers", "edge")
+- Handles FlateDecode compression — works on 95%+ of real-world PDFs (all 31 R2 PDFs)
+- Zero LMS dependency — LMS just calls `/extract-pdf` with an R2 key
+- Simpler than Python Worker approach (no Pyodide package issues, no separate service)
+
+**Four failed approaches before finding unpdf:**
+1. BT/ET regex — only works on uncompressed PDFs (<5% of real-world PDFs)
+2. pdf-parse npm — depends on Node.js Buffer, not available in Workers
+3. Python Worker with PyPDF2 — PyPDF2 not in Pyodide's package list
+4. Checked Pyodide repodata — PyPDF2 can't be added without custom build
+
+**How it works:**
+```
+LMS: POST /extract-pdf { r2Key: "courses/module-4.pdf" }
+  ↓
+ai-indexing Worker:
+  → env.LMS_CONTENT.get(r2Key)          // fetch from R2
+  → unpdf.extractText(pdf, {mergePages}) // decompress + extract
+  → env.INDEXING_QUEUE.send({entity})    // queue for chunk+embed
+  → 202 Accepted (instant)
+  ↓
+Queue consumer:
+  → chunkText() → embed() → Vectorize
+```
+
+**Bundle impact:** 2.3MB total (unpdf ~1.1MB), under Workers' 3MB limit.
+
+**Trade-off:** Larger bundle size, slightly slower cold starts. Acceptable trade for zero LMS dependency and real PDF text extraction.
+
 ---
 
 ## Data Flow: Question → Answer (End-to-End)
@@ -262,6 +296,21 @@
 12. Tokens flow back: gateway → DO → WebSocket → browser
 13. DO saves exchange (question + answer) to SQLite
 14. Browser displays: "List comprehensions use [expr for item...] [Python, Page 12]"
+
+## Data Flow: PDF → Indexed → Searchable
+
+```
+1. LMS calls /extract-pdf with R2 key
+2. ai-indexing fetches PDF from R2 (lms-content-staging)
+3. unpdf decompresses + extracts text (handles FlateDecode)
+4. Worker pushes { entity: { content: "...12K chars..." } } to queue → 202
+5. Queue consumer picks up job
+6. chunkText() splits at 2000-char sentence boundaries
+7. embedAndUpsert() → bge-large-en-v1.5 → 1024-dim vectors → Vectorize
+8. Each chunk has metadata: { content_type: "pdf", lesson_id, title, chunk_index, total_chunks }
+9. Learner asks tutor → embed question → search Vectorize
+10. Tutor returns grounded answer with citations from PDF content
+```
 ```
 
 ---
@@ -273,8 +322,10 @@
 | `lms-lessons` | Vectorize Index (1024-dim) | ai-indexing, ai-tutor | Embedded lesson content |
 | `indexing-jobs` | Queue | ai-indexing | Async indexing pipeline |
 | `TutorSession` | Durable Object | ai-tutor | Per-learner conversation state |
+| `lms-content-staging` | R2 Bucket | ai-indexing | PDF/PPT/document storage |
 | `lms-platform` | D1 Database | ai-gateway | Org budget tracking |
 | `LMS_CACHE` | KV Namespace | ai-gateway | Cache (reserved, not used yet) |
+| `unpdf` | npm package (1.1MB) | ai-indexing | PDF text extraction (PDF.js for Workers) |
 | `CLOUDFLARE_STREAM_API_TOKEN` | Secret | ai-indexing | Fetch VTT captions from Stream |
 | `CLOUDFLARE_ACCOUNT_ID` | Secret | ai-indexing | Stream API account |
 | `LMS_WEBHOOK_SECRET` | Secret | ai-indexing | Authenticate LMS webhooks |
