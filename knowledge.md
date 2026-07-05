@@ -1,3 +1,118 @@
+## Session: — AI01: PDF Text Extraction — Four Failed Approaches Before unpdf
+
+**Question:** How do we extract text from the 31 PDFs in the `lms-content-staging` R2 bucket so they can be indexed and searched by the tutor?
+
+**The journey (95 minutes, 4 failed approaches, 1 success):**
+
+### Attempt 1: BT/ET Regex — 5 min — FAILED
+
+Parsed PDF binary looking for `BT...ET` text blocks with `(text) Tj` operators. Works only for uncompressed PDFs. All 31 R2 PDFs use FlateDecode compression. Output: raw PDF syntax, zero readable text.
+
+**Code tried:**
+```typescript
+const btPattern = /BT\s*\n([\s\S]*?)\nET/g;
+const tjPattern = /\(([^)]*)\)\s*Tj/g;
+// → matched nothing — text is inside compressed streams
+```
+
+### Attempt 2: pdf-parse npm — 20 min — FAILED
+
+Installed `pdf-parse` which wraps pdfjs-dist. Code:
+```typescript
+const pdfParse = (await import("pdf-parse")).default;
+const result = await pdfParse(Buffer.from(data));
+```
+
+Failed because `pdf-parse` depends on Node.js `Buffer`. Even with `nodejs_compat` compatibility flag, the dynamic import failed silently. Fell back to regex fallback → same garbage output.
+
+### Attempt 3: Python Worker with PyPDF2 — 30 min — FAILED
+
+Scaffolded `workers/pdf-extractor/` as a Python Worker (Pyodide). Code used `import PyPDF2`. Deployment failed:
+```
+ModuleNotFoundError: No module named 'PyPDF2'
+```
+
+PyPDF2 is pure Python but not in Pyodide's pre-built package list for Cloudflare Python Workers. Adding arbitrary PyPI packages to Python Workers requires custom Pyodide builds — not supported yet.
+
+### Attempt 4: Check Pyodide Repodata — 10 min — ABANDONED
+
+Tried `curl https://cdn.jsdelivr.net/pyodide/v0.25.0/full/repodata.json` to check available packages. Fetch failed. Even if PyPDF2 could be added, the maintenance burden of custom Pyodide builds didn't justify the approach.
+
+### Attempt 5: unpdf — 30 min — SUCCESS ✅
+
+**Insight:** Web searched "cloudflare workers pdf text extraction npm". Found `unpdf` — a PDF.js wrapper built specifically for serverless/edge runtimes. Keywords: "cloudflare", "workers", "edge", "text-extraction". 1.4M weekly downloads.
+
+**Code:**
+```typescript
+const { extractText, getDocumentProxy } = await import("unpdf");
+const pdf = await getDocumentProxy(new Uint8Array(buffer));
+const { text } = await extractText(pdf, { mergePages: true });
+```
+
+**Results:**
+- Module 4 Core Lecture (15KB PDF): 12,476 chars — "AI-Powered Decision Intelligence for SMEs..."
+- Code of Conduct (762KB PDF): 10,371 chars — "Wragby Code of Conduct Document Classification: CONFIDENTIAL..."
+- Bundle size: 2.3MB total (unpdf ~1.1MB), under 3MB Worker limit
+
+**Why unpdf works when pdf-parse doesn't:**
+- unpdf bundles pdfjs-serverless — a Rollup build of PDF.js with browser references stripped, worker inlined, and global polyfills for Workers
+- pdf-parse depends on the standard pdfjs-dist which expects Node.js APIs
+- unpdf's serverless build handles FlateDecode decompression natively
+
+**Key takeaway:** "Cloudflare Workers compatible" in npm keywords/packages is the signal. `unpdf` lists it; `pdf-parse` doesn't. Always search before coding — this was 95 minutes that a 30-second web search could have saved.
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (`extractTextFromPdfBufferAsync`, `extractTextFromPdfBuffer`, `extractTextFromPptxBuffer`)
+- `workers/ai-indexing/wrangler.jsonc` (R2 binding `LMS_CONTENT → lms-content-staging`)
+- `workers/ai-indexing/package.json` (`unpdf` dependency)
+- `workers/pdf-extractor/` (abandoned Python Worker approach, kept for reference)
+
+---
+
+## Session: — AI01: PDF Indexing Pipeline — R2 → unpdf → Queue → Vectorize
+
+**Architecture:**
+
+```
+LMS: POST /extract-pdf { r2Key: "courses/module-4.pdf", lesson_id, title, org_id }
+  ↓ (requires X-Webhook-Secret)
+
+i-indexing Worker:
+  1. env.LMS_CONTENT.get(r2Key)              // R2 binding → lms-content-staging
+  2. unpdf.extractText(pdf, {mergePages})     // decompresses FlateDecode, returns text
+  3. If unpdf fails → regex fallback (uncompressed PDFs, simple text)
+  4. env.INDEXING_QUEUE.send({ entity: { content: text, ... } })
+  5. Return 202 { status: "queued", chars: 12476 }
+  ↓
+
+Queue consumer:
+  6. chunkText(text)           // 2000 chars, sentence boundaries
+  7. embedAndUpsert()          // bge-large-en-v1.5 → Vectorize
+  8. Metadata: { content_type: "pdf", lesson_id, title, org_id, chunk_index, total_chunks }
+```
+
+**New endpoints:**
+- `POST /extract-pdf` — fetch PDF from R2, extract text, queue for indexing (requires webhook auth)
+- `GET /r2-list?prefix=...` — browse R2 bucket contents (diagnostic, no auth)
+- `GET /diag-extract?key=...&preview=1` — show extracted text without indexing (diagnostic, no auth)
+
+**One-line fix for non-video indexing:**
+```typescript
+// Before:
+const content = buildMetadataContent(entity);  // "Title. pdf." — 20 chars
+// After:
+const content = entity.content || buildMetadataContent(entity);  // LMS can send pre-extracted text
+```
+
+**R2 bucket contents:** 31 PDFs (course modules, policy docs, analysis reports) + 13 images.
+
+**Related files:**
+- `workers/ai-indexing/src/index.ts` (`handleExtractPdf`, `handleR2List`, `handleDiagExtract`)
+- `workers/ai-indexing/wrangler.jsonc` (R2 binding)
+- `docs/lms-api-contract-for-backend.md` (API spec)
+
+---
+
 ## Session: — AI01: Queue-Based Indexing (Async Processing)
 
 **Context:** Previously, `POST /index` processed everything synchronously — fetch VTT, chunk, embed, upsert — all in one HTTP request. This took 5-70 seconds and risked 30s Worker timeout for long videos.
