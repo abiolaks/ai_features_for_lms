@@ -12,7 +12,7 @@
     "AI01": { "status": "complete", "title": "Content Indexing (Stream captions + Vectorize)", "deployed": "https://ai-indexing.yomi-alarape.workers.dev", "tests": "16/16", "github": 8 },
     "AI04": { "status": "complete", "title": "Tutor — Grounded Q&A", "deployed": "https://ai-tutor.yomi-alarape.workers.dev", "tests": "15/15", "github": 10 },
     "AI08": { "status": "pending", "title": "Post-Quiz Insights", "pr_lines": 200, "github": 6 },
-    "AI06": { "status": "pending", "title": "Learning Paths", "pr_lines": 300, "github": 4 },
+    "AI06": { "status": "complete", "title": "Learning Paths", "deployed": "https://ai-paths.yomi-alarape.workers.dev", "tests": "20/20", "github": 4 },
     "AI07": { "status": "pending", "title": "Recommendations", "pr_lines": 200, "github": 5 },
     "AI13": { "status": "pending", "title": "Demo Dashboard", "pr_lines": 200, "github": 7 }
   },

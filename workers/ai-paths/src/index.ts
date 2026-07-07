@@ -7,8 +7,12 @@
 // design prompt.
 // ============================================================
 
+import { fetchLms } from "../../shared/fetch-lms";
+
 export interface Env {
   AI_GATEWAY: Fetcher;
+  LMS_GATEWAY_URL: string;
+  LMS_INTERNAL_KEY: string;
 }
 
 // ──── Types ────
@@ -139,59 +143,94 @@ async function handleGenerate(
   setAttr(dataSpan, "org_id", body.org_id);
 
   // ── LMS: Fetch learner profile ──
-  // When LMS is live, uncomment and wrap in lms-fetch span:
-  //
-  //   const profileSpan = startSpan("lms.fetch");
-  //   setAttr(profileSpan, "method", "GET");
-  //   setAttr(profileSpan, "path", "/api/v1/learner/profile");
-  //   setAttr(profileSpan, "learner_id", body.learner_id);
-  //   const resp = await fetch(
-  //     `${env.LMS_GATEWAY_URL}/api/v1/learner/profile?learner_id=${body.learner_id}`,
-  //     { headers: { "X-API-Key": env.LMS_INTERNAL_KEY } }
-  //   );
-  //   setAttr(profileSpan, "status", resp.status);
-  //   const profile = resp.ok ? await resp.json() : undefined;
-  //   endSpan(profileSpan);
-  //
-  // Secrets needed: LMS_GATEWAY_URL, LMS_INTERNAL_KEY
-  const profile = body.profile;
+  let profile = body.profile;
+  let profileFromLms = false;
+  try {
+    const profileSpan = startSpan("lms.fetch");
+    setAttr(profileSpan, "endpoint", "profile");
+    setAttr(profileSpan, "learner_id", body.learner_id);
+    const resp = await fetchLms(env, {
+      path: `/api/v1/learner/profile`,
+    });
+    setAttr(profileSpan, "status", resp.status);
+    if (resp.ok) {
+      const raw = await resp.json() as any;
+      const data = raw.data || raw;
+      profile = {
+        skills: data.skills || [],
+        goals: data.goals || "",
+        experience_level: data.experience_level || "beginner",
+        interests: data.interests || [],
+        streak_days: data.gamification?.login_streak || 0,
+        points: data.gamification?.total_points || 0,
+      };
+      profileFromLms = true;
+    }
+    endSpan(profileSpan);
+  } catch {
+    // LMS not available — use stub data from request body
+    setAttr(dataSpan, "lms_available", false);
+  }
 
   // ── LMS: Fetch course catalogue ──
-  // When LMS is live, uncomment and wrap in lms-fetch span:
-  //
-  //   const catalogSpan = startSpan("lms.fetch");
-  //   setAttr(catalogSpan, "method", "GET");
-  //   setAttr(catalogSpan, "path", "/api/v1/catalog");
-  //   setAttr(catalogSpan, "org_id", body.org_id);
-  //   const resp = await fetch(
-  //     `${env.LMS_GATEWAY_URL}/api/v1/catalog?org_id=${body.org_id}`,
-  //     { headers: { "X-API-Key": env.LMS_INTERNAL_KEY } }
-  //   );
-  //   setAttr(catalogSpan, "status", resp.status);
-  //   const catalogue = resp.ok ? await resp.json() : [];
-  //   setAttr(catalogSpan, "course_count", catalogue.length);
-  //   endSpan(catalogSpan);
-  const catalogue = body.catalogue || [];
-  setAttr(dataSpan, "catalogue_stub", true);
+  let catalogue = body.catalogue || [];
+  let catalogFromLms = false;
+  try {
+    const catalogSpan = startSpan("lms.fetch");
+    setAttr(catalogSpan, "endpoint", "catalog");
+    setAttr(catalogSpan, "org_id", body.org_id);
+    const resp = await fetchLms(env, {
+      path: `/api/v1/catalog`,
+    });
+    setAttr(catalogSpan, "status", resp.status);
+    if (resp.ok) {
+      const raw = await resp.json() as any;
+      const items = raw.data || raw;
+      catalogue = items.map((c: any) => ({
+        title: c.title,
+        difficulty: c.difficultyLevel || c.difficulty,
+        category: c.category,
+        prerequisites: c.prerequisites || [],
+      }));
+      catalogFromLms = true;
+    }
+    setAttr(catalogSpan, "course_count", catalogue.length);
+    endSpan(catalogSpan);
+  } catch {
+    // LMS not available — use stub data from request body
+  }
 
   // ── LMS: Fetch learner progress ──
-  // When LMS is live, uncomment and wrap in lms-fetch span:
-  //
-  //   const progressSpan = startSpan("lms.fetch");
-  //   setAttr(progressSpan, "method", "GET");
-  //   setAttr(progressSpan, "path", "/api/v1/progress/user");
-  //   setAttr(progressSpan, "learner_id", body.learner_id);
-  //   const resp = await fetch(
-  //     `${env.LMS_GATEWAY_URL}/api/v1/progress/user?learner_id=${body.learner_id}`,
-  //     { headers: { "X-API-Key": env.LMS_INTERNAL_KEY } }
-  //   );
-  //   setAttr(progressSpan, "status", resp.status);
-  //   const progress = resp.ok ? await resp.json() : [];
-  //   setAttr(progressSpan, "enrollment_count", progress.length);
-  //   endSpan(progressSpan);
-  const progress = body.progress || [];
-  setAttr(dataSpan, "progress_stub", true);
+  let progress = body.progress || [];
+  let progressFromLms = false;
+  try {
+    const progressSpan = startSpan("lms.fetch");
+    setAttr(progressSpan, "endpoint", "progress");
+    setAttr(progressSpan, "learner_id", body.learner_id);
+    const resp = await fetchLms(env, {
+      path: `/api/v1/progress/user?userId=${body.learner_id}`,
+    });
+    setAttr(progressSpan, "status", resp.status);
+    if (resp.ok) {
+      const raw = await resp.json() as any;
+      const data = raw.data || raw;
+      const enrollments = data.enrollments || [];
+      progress = enrollments.map((e: any) => ({
+        title: e.courseTitle,
+        status: e.status === "completed" ? "completed" : "in_progress",
+        progress_pct: parseInt(e.progressPercent) || 0,
+      }));
+      progressFromLms = true;
+    }
+    setAttr(progressSpan, "enrollment_count", progress.length);
+    endSpan(progressSpan);
+  } catch {
+    // LMS not available — use stub data from request body
+  }
 
+  setAttr(dataSpan, "profile_from_lms", profileFromLms);
+  setAttr(dataSpan, "catalog_from_lms", catalogFromLms);
+  setAttr(dataSpan, "progress_from_lms", progressFromLms);
   setAttr(dataSpan, "catalogue_courses", catalogue.length);
   setAttr(dataSpan, "progress_entries", progress.length);
   setAttr(dataSpan, "has_profile", !!(profile && (profile.skills?.length || profile.goals)));
@@ -206,7 +245,7 @@ async function handleGenerate(
   }
 
   const hasProfile = profile && (profile.skills?.length || profile.goals);
-  if (!hasProfile) {
+  if (!hasProfile || !profile) {
     return json({
       path: catalogue.slice(0, 5).map((c, i) => ({
         course_title: c.title,
@@ -217,8 +256,11 @@ async function handleGenerate(
     }, 200);
   }
 
+  // TypeScript can't narrow `let` across try/catch — reassign to const
+  const learnerProfile: LearnerProfile = profile;
+
   // ── Build prompt ──
-  const prompt = buildPrompt(profile, catalogue, progress);
+  const prompt = buildPrompt(learnerProfile, catalogue, progress);
 
   // ═══════════════════════════════════════════════════════
   //  SPAN: path.generate — LLM call + validation
@@ -227,8 +269,8 @@ async function handleGenerate(
   setAttr(pathSpan, "org_id", body.org_id);
   setAttr(pathSpan, "catalogue_courses_considered", catalogue.length);
   setAttr(pathSpan, "completed_courses", progress.filter((p) => p.status === "completed").length);
-  setAttr(pathSpan, "has_profile_goals", !!profile.goals);
-  setAttr(pathSpan, "has_profile_skills", !!(profile.skills && profile.skills.length > 0));
+  setAttr(pathSpan, "has_profile_goals", !!learnerProfile.goals);
+  setAttr(pathSpan, "has_profile_skills", !!(learnerProfile.skills && learnerProfile.skills.length > 0));
 
   try {
     // ── Call AI03 Gateway ──
@@ -259,11 +301,7 @@ async function handleGenerate(
       endSpan(pathSpan);
 
       return json({
-        path: catalogue.slice(0, 5).map((c, i) => ({
-          course_title: c.title,
-          order: i + 1,
-          why_this_fits: "",
-        })),
+        path: fallbackPath(catalogue, progress),
         ai_status: "degraded",
       }, 200);
     }
@@ -272,7 +310,15 @@ async function handleGenerate(
     setAttr(pathSpan, "llm_model", llm.model_used || "unknown");
     setAttr(pathSpan, "llm_tokens", llm.tokens_used || 0);
 
-    const path = parsePath(llm.response, catalogue, progress, pathSpan);
+    // Normalize: Workers AI sometimes returns response as already-parsed object
+    const rawResponse: unknown = llm.response;
+    setAttr(pathSpan, "response_type", typeof rawResponse);
+    const responseText: string =
+      typeof rawResponse === "string"
+        ? rawResponse
+        : JSON.stringify(rawResponse);
+
+    const path = parsePath(responseText, catalogue, progress, pathSpan);
     const isFallback = path.length > 0 && path.every((c) => !c.why_this_fits);
 
     setAttr(pathSpan, "ai_status", isFallback ? "degraded" : "generated");
@@ -293,11 +339,7 @@ async function handleGenerate(
     endSpan(pathSpan);
 
     return json({
-      path: catalogue.slice(0, 5).map((c, i) => ({
-        course_title: c.title,
-        order: i + 1,
-        why_this_fits: "",
-      })),
+      path: fallbackPath(catalogue, progress),
       ai_status: "degraded",
     }, 200);
   }
@@ -428,12 +470,21 @@ function parsePath(
   return courses.slice(0, 5);
 }
 
-function fallbackPath(catalogue: CatalogueCourse[]): PathCourse[] {
-  return catalogue.slice(0, 5).map((c, i) => ({
-    course_title: c.title,
-    order: i + 1,
-    why_this_fits: "",
-  }));
+function fallbackPath(
+  catalogue: CatalogueCourse[],
+  progress: ProgressEntry[] = []
+): PathCourse[] {
+  const completedTitles = new Set(
+    progress.filter((p) => p.status === "completed").map((p) => p.title)
+  );
+  return catalogue
+    .filter((c) => !completedTitles.has(c.title))
+    .slice(0, 5)
+    .map((c, i) => ({
+      course_title: c.title,
+      order: i + 1,
+      why_this_fits: "",
+    }));
 }
 
 // ════════════════════════════════════════════════════════
