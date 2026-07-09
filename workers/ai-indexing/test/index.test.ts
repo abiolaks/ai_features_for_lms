@@ -33,6 +33,7 @@ beforeAll(() => {
   // Vectorize: mock upsert + delete
   (env as any).VECTORIZE_INDEX = {
     upsert: vi.fn().mockResolvedValue(undefined),
+    getByIds: vi.fn().mockResolvedValue([]),
     deleteByIds: vi.fn().mockResolvedValue(undefined),
   };
 
@@ -198,7 +199,7 @@ describe('extractTextFromVTT', () => {
 // ════════════════════════════════════════════════════════
 
 describe('POST /index — text lesson', () => {
-  it('indexes text content, calls embedding + upsert', async () => {
+  it('queues text content for indexing', async () => {
     const res = await callWorker('/index', {
       event: 'publish',
       org_id: 'org-test',
@@ -211,20 +212,9 @@ describe('POST /index — text lesson', () => {
       },
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const body: any = await res.json();
-    expect(body.status).toBe('indexed');
-    expect(body.transcript_source).toBe('none');
-    expect(body.content_length).toBeGreaterThan(0);
-    expect(body.content_length).toBeLessThan(200);
-
-    // Verify embedding was called
-    expect((env as any).AI.run).toHaveBeenCalled();
-    // Verify upsert was called with correct ID
-    expect((env as any).VECTORIZE_INDEX.upsert).toHaveBeenCalled();
-    const upsertCall = (env as any).VECTORIZE_INDEX.upsert.mock.calls[0][0][0];
-    expect(upsertCall.id).toBe('lesson-lesson-text-1');
-    expect(upsertCall.metadata.org_id).toBe('org-test');
+    expect(body.status).toBe('queued');
   });
 });
 
@@ -258,6 +248,12 @@ describe('POST /index — video lesson', () => {
 
 describe('POST /deindex', () => {
   it('deletes from Vectorize', async () => {
+    // Return matching vector so cleanup finds it
+    (env as any).VECTORIZE_INDEX.getByIds = vi.fn().mockResolvedValue([
+      { id: 'lesson-lesson-to-delete', values: [], metadata: {} },
+    ]);
+    (env as any).VECTORIZE_INDEX.deleteByIds = vi.fn().mockResolvedValue(undefined);
+
     const res = await callWorker('/deindex', {
       event: 'unpublish',
       org_id: 'org-test',

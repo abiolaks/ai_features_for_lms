@@ -6,6 +6,8 @@
 // embeds content via Workers AI, and upserts to Vectorize.
 // ============================================================
 
+import { fetchLms } from "../../shared/fetch-lms";
+
 export interface Env {
   AI: any;
   STREAM: any;
@@ -14,12 +16,15 @@ export interface Env {
   CLOUDFLARE_STREAM_API_TOKEN: string;
   CLOUDFLARE_ACCOUNT_ID: string;
   LMS_WEBHOOK_SECRET: string;
+  LMS_GATEWAY_URL: string;
+  LMS_INTERNAL_KEY: string;
   LMS_CONTENT: R2Bucket;
 }
 
 // ──── Constants ────
 
 const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
+const decoder = new TextDecoder();
 
 // ──── Request Types ────
 
@@ -35,8 +40,13 @@ interface IndexRequest {
     course_id?: string;
     module_id?: string;
     durationSeconds?: number;
+    content?: string;
+    description?: string;
+    tags?: string[];
   };
 }
+
+type IndexJob = IndexRequest;
 
 interface BackfillRequest {
   org_id: string;
@@ -241,6 +251,10 @@ export default {
 
     switch (path) {
       case "/index":
+        // Validate required fields before queuing
+        if (!body.event) return Response.json({ error: "Missing event" }, { status: 400 });
+        if (!body.org_id) return Response.json({ error: "Missing org_id" }, { status: 400 });
+        if (!body.entity) return Response.json({ error: "Missing entity" }, { status: 400 });
         // Push to queue — returns instantly, consumer processes async
         await env.INDEXING_QUEUE.send(body);
         return Response.json({
@@ -487,7 +501,7 @@ async function extractTextFromPdfBufferAsync(buffer: ArrayBuffer): Promise<strin
     const { extractText, getDocumentProxy } = await import("unpdf");
     const pdf = await getDocumentProxy(new Uint8Array(buffer));
     const { text } = await extractText(pdf, { mergePages: true });
-    return (typeof text === "string" ? text : text.join("\n")).trim();
+    return text.trim();
   } catch (err: any) {
     console.error(`unpdf extraction failed: ${err.message}`);
     return "";
@@ -501,7 +515,6 @@ function extractTextFromPdfBuffer(buffer: ArrayBuffer): string {
     // Workers support top-level await, so we use it inside an async wrapper.
     // For now, strip PDF syntax and extract readable fragments.
     const bytes = new Uint8Array(buffer);
-    const decoder = new TextDecoder();
     const raw = decoder.decode(bytes);
 
     // Strategy 1: Try to find text between parentheses followed by Tj operator
@@ -562,7 +575,6 @@ function extractTextFromPdfBuffer(buffer: ArrayBuffer): string {
 function extractTextFromPptxBuffer(buffer: ArrayBuffer): string {
   // PPTX is a ZIP file containing XML. Extract text from XML.
   const bytes = new Uint8Array(buffer);
-  const decoder = new TextDecoder();
   const text = decoder.decode(bytes);
 
   // PPTX stores text in <a:t> elements
@@ -593,35 +605,40 @@ async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
   // Secret to create:  npx wrangler secret put LMS_WEBHOOK_SECRET
 
   // ── LMS_INTEGRATION: Enrich entity metadata ──
-  // TODO: When the LMS REST API is live, fetch additional lesson
-  // metadata (description, tags, sections) to enrich Vectorize content.
-  //
-  //   const resp = await fetch(
-  //     `${env.LMS_GATEWAY_URL}/api/v1/lessons/${entity.id}`,
-  //     { headers: { "X-API-Key": env.LMS_INTERNAL_KEY } }
-  //   );
-  //   const lmsLesson = await resp.json();
-  //   // Merge lmsLesson.description, lmsLesson.tags into metadata
-  //
-  // Secrets to create:
-  //   npx wrangler secret put LMS_GATEWAY_URL    (e.g. https://lms.example.com)
-  //   npx wrangler secret put LMS_INTERNAL_KEY   (shared API key)
-
+  // Fetch additional lesson metadata (description, tags, sections) from LMS
+  // to enrich Vectorize content. Falls back gracefully when LMS is not available.
   const { event, org_id, entity } = body;
+  let enrichedEntity = { ...entity };
+  try {
+    const resp = await fetchLms(env, {
+      path: `/api/v1/lessons/${entity.id}`,
+    });
+    if (resp.ok) {
+      const lmsLesson = await resp.json() as any;
+      enrichedEntity = {
+        ...enrichedEntity,
+        title: lmsLesson.title || enrichedEntity.title,
+        description: lmsLesson.description,
+        tags: lmsLesson.tags,
+      };
+    }
+  } catch {
+    // LMS not available — continue with metadata from webhook body
+  }
   if (!event) return Response.json({ error: "Missing event" }, { status: 400 });
   if (!org_id) return Response.json({ error: "Missing org_id" }, { status: 400 });
   if (!entity) return Response.json({ error: "Missing entity" }, { status: 400 });
   if (event !== "publish") return Response.json({ error: "Unknown event" }, { status: 400 });
 
   // ── Video lesson ──
-  if (entity.contentType === "video") {
-    return handleVideoIndex(entity, org_id, env);
+  if (enrichedEntity.contentType === "video") {
+    return handleVideoIndex(enrichedEntity, org_id, env);
   }
 
   // ── Text lesson — use extracted content if provided ──
-  const content = entity.content || buildMetadataContent(entity);
+  const content = enrichedEntity.content || buildMetadataContent(enrichedEntity);
   try {
-    const { chunks, content_length } = await embedAndUpsert(env, org_id, entity, content, "none");
+    const { chunks, content_length } = await embedAndUpsert(env, org_id, enrichedEntity, content, "none");
     return Response.json({ status: "indexed", transcript_source: "none", content_length, chunks });
   } catch (err: any) {
     return Response.json({ error: `Indexing failed: ${err.message}` }, { status: 500 });
