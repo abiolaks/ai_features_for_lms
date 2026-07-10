@@ -8,6 +8,7 @@
 // ============================================================
 
 import { fetchLms } from "../../shared/fetch-lms";
+import { json, handleCors } from "../../shared/cors";
 
 export interface Env {
   AI_GATEWAY: Fetcher;
@@ -99,6 +100,10 @@ function endSpan(ctx: SpanContext): void {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    // ── CORS preflight ──
+    const preflight = handleCors(req);
+    if (preflight) return preflight;
+
     if (req.method !== "POST") {
       return json({ error: "Method not allowed" }, 405);
     }
@@ -487,13 +492,4 @@ function fallbackPath(
     }));
 }
 
-// ════════════════════════════════════════════════════════
-//  Helpers
-// ════════════════════════════════════════════════════════
 
-function json(data: unknown, status: number): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
