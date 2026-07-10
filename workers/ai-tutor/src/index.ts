@@ -7,6 +7,7 @@
 // ============================================================
 
 import { TutorSession } from "./TutorSession";
+import { json, handleCors } from "../../shared/cors";
 
 export { TutorSession };
 
@@ -39,6 +40,10 @@ interface AskRequest {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    // ── CORS preflight ──
+    const preflight = handleCors(req);
+    if (preflight) return preflight;
+
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -134,13 +139,4 @@ async function handleDiagSearch(url: URL, env: Env): Promise<Response> {
   }
 }
 
-// ════════════════════════════════════════════════════════
-//  Helpers
-// ════════════════════════════════════════════════════════
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
