@@ -100,6 +100,70 @@ opensrc fetch pypi:httpx                   # Async HTTP test client
 - **Org isolation** — enforced at the query level in LanceDB. Not in application code.
 - **Phoenix observability (P01b)** — every LLM call, embedding, and retrieval is traced. Evals run in CI.
 
+### LMS Gateway Integration (Workers ↔ LMS Backend)
+
+AI Workers fetch live learner/catalog/progress data from the LMS backend via REST API. The shared client is at `workers/shared/fetch-lms.ts`.
+
+**Auth:** `X-API-Key: <LMS_INTERNAL_KEY>` header on every request. No query param auth.
+
+**Env vars every worker needs:**
+- `LMS_GATEWAY_URL` — e.g. `https://lms.example.com` (no trailing slash)
+- `LMS_INTERNAL_KEY` — shared secret, validated by LMS middleware
+
+**Secrets per worker:**
+```bash
+cd workers/<worker-name>
+npx wrangler secret put LMS_GATEWAY_URL
+npx wrangler secret put LMS_INTERNAL_KEY
+```
+
+**API contract:** `docs/lms-api-contract-for-backend.md` — the authoritative reference.
+
+**Endpoint conventions (must match exactly):**
+
+| Endpoint | Method | Query params | Notes |
+|----------|--------|-------------|-------|
+| `/api/v1/learner/profile` | GET | None | LMS identifies learner from key context |
+| `/api/v1/catalog` | GET | None | LMS infers org from key context |
+| `/api/v1/progress/user` | GET | `?userId=<id>` | **NOT** `learner_id` — use `userId` |
+| `/api/v1/lessons/{id}` | GET | None | Used by ai-indexing for metadata enrichment |
+| `/api/v1/health` | GET | None | Liveness check |
+
+**Response format:** All endpoints wrap data: `{ success: bool, data: ..., message?: string }`. Workers extract `.data`.
+
+**Field name mappings (LMS → Worker):**
+
+| LMS field | Worker field | Endpoint |
+|-----------|-------------|----------|
+| `difficultyLevel` | `difficulty` | catalog |
+| — | `prerequisites` | catalog (not yet in LMS — add to `CourseResource`) |
+| `courseTitle` | `title` | progress |
+| `progressPercent` (string) | `progress_pct` (number) | progress |
+| `status: "enrolled"` | `status: "in_progress"` | progress |
+| `gamification.login_streak` | `streak_days` | profile |
+| `gamification.total_points` | `points` | profile |
+
+**Stub → Live migration pattern:** Every LMS fetch is wrapped in try/catch. If LMS returns non-ok or is unreachable, the worker falls back to stub data from the request body (`body.profile`, `body.catalogue`, `body.progress`). This means tests pass without LMS secrets, and production degrades gracefully.
+
+**Debugging LMS fetches:**
+```bash
+# View live fetch status in logs
+npx wrangler tail --format pretty
+# Look for lms.fetch spans in structured logs
+```
+
+Each fetch emits an `lms.fetch` span with `endpoint`, `status`, and record counts. The `data.fetch` span reports `profile_from_lms`, `catalog_from_lms`, `progress_from_lms` booleans.
+
+**Workers that call LMS:**
+
+| Worker | Fetches | Data used for |
+|--------|---------|--------------|
+| ai-paths | profile, catalog, progress | Path generation prompt |
+| ai-indexing | lesson detail | Metadata enrichment for Vectorize |
+| ai-recommendations | profile, catalog, progress | (planned) |
+| ai-insights | progress, assessments | (planned) |
+| ai-dashboard | catalog, progress | (planned) |
+
 ### UI (P00)
 - **Web Components** — `<lms-card>`, `<lms-tabs>`, `<lms-table>`, etc. Shadow DOM. Zero framework dependencies.
 - **TypeScript** — compiled to ES modules with `tsc`. No bundler, no build step beyond type-checking.
