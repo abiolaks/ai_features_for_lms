@@ -9,7 +9,7 @@
   },
   "slices": {
     "AI03": { "status": "complete", "title": "LLM Gateway", "deployed": "https://ai-gateway.yomi-alarape.workers.dev", "tests": "14/14", "github": 9 },
-    "AI01": { "status": "complete", "title": "Content Indexing (Stream captions + Vectorize)", "deployed": "https://ai-indexing.yomi-alarape.workers.dev", "tests": "16/16", "github": 8 },
+    "AI01": { "status": "complete", "title": "Content Indexing (Stream captions + Vectorize)", "deployed": "https://ai-indexing.yomi-alarape.workers.dev", "tests": "17/17", "github": 8 },
     "AI04": { "status": "complete", "title": "Tutor — Grounded Q&A", "deployed": "https://ai-tutor.yomi-alarape.workers.dev", "tests": "15/15", "github": 10 },
     "AI08": { "status": "pending", "title": "Post-Quiz Insights", "pr_lines": 200, "github": 6 },
     "AI06": { "status": "complete", "title": "Learning Paths", "deployed": "https://ai-paths.yomi-alarape.workers.dev", "tests": "20/20", "github": 4 },
