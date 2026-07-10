@@ -24,15 +24,15 @@ If cases 2 or 3 are true, AI07's fallback cascade ("generate recs from catalogue
 
 We combine four signals — content similarity, collaborative filtering, skill-gap fill, and AI scores — into a single ranked list. No signal alone is sufficient; together they produce personalized recs.
 
-### Signal 1: Content-Based (AI Search)
+### Signal 1: Content-Based (Vectorize)
 **What:** "Courses similar to what you've completed"
-**How:** Search AI Search `{org_id}-courses` instance with learner's completed course topics as query → AI Search returns nearest unenrolled courses via hybrid search.
-**Strength:** Always available. Works for cold-start learners with at least one completed course. No separate embedding needed — AI Search handles everything.
+**How:** Search Vectorize `{org_id}-courses` index with learner's completed course topics as query (embedded via Workers AI `@cf/qwen/qwen3-embedding-0.6b`) → Vectorize returns nearest unenrolled courses via cosine similarity.
+**Strength:** Always available. Works for cold-start learners with at least one completed course. Embeddings run on Cloudflare's edge — no separate embedding service needed.
 
 ```
 Learner completed "Python Fundamentals" + "Intro to Data"
-→ Query AI Search courses instance with combined description
-→ Hybrid search returns "Advanced Python" (score 0.92), "Data Structures" (0.89)
+→ Embed combined description → query Vectorize courses index
+→ Cosine similarity returns "Advanced Python" (score 0.92), "Data Structures" (0.89)
 ```
 
 ### Signal 2: Collaborative ("Learners Like You")
@@ -89,7 +89,7 @@ Return JSON: [{ course_id, score (0-100), reason, fit_level: 'strong'|'moderate'
 │  │ 1. Check KV cache → hit: return immediately       │  │
 │  │ 2. Fetch learner: profile + progress + skill gaps │  │
 │  │ 3. Parallel signal computation:                   │  │
-│  │    ├── Signal 1: Content-based (AI Search)        │  │
+│  │    ├── Signal 1: Content-based (Vectorize)        │  │
 │  │    ├── Signal 2: Collaborative (D1 query)         │  │
 │  │    └── Signal 3: Skill-gap fill (catalog filter)  │  │
 │  │ 4. Merge + deduplicate candidates                 │  │
@@ -102,7 +102,7 @@ Return JSON: [{ course_id, score (0-100), reason, fit_level: 'strong'|'moderate'
         │                │                │
         ▼                ▼                ▼
    ┌──────────┐    ┌──────────┐    ┌──────────┐
-   │AI Search │    │    D1     │    │ AI03 GW  │
+   │ Vectorize│    │    D1     │    │ AI03 GW  │
    │(courses) │    │ (SQLite)  │    │(Workers AI)│
    └──────────┘    └──────────┘    └──────────┘
 ```
@@ -200,7 +200,7 @@ CREATE INDEX idx_rec_events_batch ON recommendation_events(recommendation_batch_
 | **0** | KV cache hit | Return cached recs instantly (24h TTL) |
 | **1** | All 4 signals available | Full hybrid scoring (best result) |
 | **2** | AI03 unreachable | Skip AI signal → weight redistribution to 40/30/30 |
-| **3** | AI Search courses instance empty (no indexed courses) | Skip content signal → weight to 35/35/30 |
+| **3** | Vectorize courses index empty (no indexed courses) | Skip content signal → weight to 35/35/30 |
 | **4** | D1 has no learner history (cold start) | Skip collaborative → weight to 50/0/50 (content + skill gaps) |
 | **5** | LMS skill gaps unavailable | Skip skill gap signal → weight to 50/50/0 (gaps inferred from profile) |
 | **6** | Cold start + all offline | Return popular + catalog-based suggestions, `ai_status: "degraded"` |
@@ -260,7 +260,7 @@ Cache invalidation happens via a simple Worker endpoint: `POST /recommendations/
 
 This is a specialized variant that:
 1. Looks up what learners typically enroll in after `course_id` (collaborative signal from D1)
-2. Finds courses that build on `course_id`'s skills (content signal from AI Search)
+2. Finds courses that build on `course_id`'s skills (content signal from Vectorize)
 3. Uses AI03 to rank by personal fit given the learner's current course
 
 Use case: shown on the "Course Complete" page — "What's next?"
@@ -324,7 +324,7 @@ If AI07b is not deployed (LMS recs are working fine), AI07 skips it entirely.
 | Component | Lines | Effort |
 |-----------|-------|--------|
 | D1 schema + migrations | ~30 | Low |
-| Content-based signal (AI Search query) | ~40 | Low |
+| Content-based signal (Vectorize query) | ~40 | Low |
 | Collaborative signal (D1 query) | ~50 | Medium |
 | Skill-gap signal (LMS fetch + filter) | ~40 | Low |
 | AI scoring signal (AI03 call + prompt) | ~60 | Medium |
@@ -340,7 +340,7 @@ If AI07b is not deployed (LMS recs are working fine), AI07 skips it entirely.
 ## Build Order
 
 1. D1 schema + D1 helper utilities
-2. Content-based signal (AI Search — search courses instance)
+2. Content-based signal (Vectorize — query courses index)
 3. Collaborative signal (D1 queries + enrollment pattern storage)
 4. Skill-gap signal (LMS API fetch + catalog filter)
 5. AI scoring signal (AI03 prompt)
