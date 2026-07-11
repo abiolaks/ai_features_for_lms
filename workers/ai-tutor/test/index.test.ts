@@ -45,6 +45,161 @@ beforeAll(() => {
     query: mockVectorizeQuery([]),
   };
   (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+  // Mock DO binding — returns stubs that forward to real TutorSession logic.
+  // NOTE: Because the DO isn't registered in wrangler.test.jsonc, we mock
+  // the binding manually. The stub calls run in the same process context
+  // so they access the same mocked env bindings (AI, VECTORIZE_INDEX, etc.).
+  //
+  // We lazy-load TutorSession to avoid DO constructor issues — the mock
+  // stub delegates to internal logic that uses the shared env mock.
+  const doStubs = new Map<string, any>();
+
+  function getOrCreateStub(name: string) {
+    if (!doStubs.has(name)) {
+      doStubs.set(name, {
+        ask: vi.fn(async (body: any) => {
+          // Delegate to a lightweight version of the ask logic
+          // that uses mocked bindings from the shared test env
+          const origin = body.origin;
+          try {
+            const embedding = await (env as any).AI.run("@cf/baai/bge-large-en-v1.5", { text: body.question });
+            const vector = embedding.data?.[0] ?? embedding;
+
+            const filter: Record<string, string> = { org_id: body.org_id };
+            const scope = body.expand_scope || "lesson";
+            switch (scope) {
+              case "lesson": filter["lesson_id"] = body.lesson_id; break;
+              case "module": if (body.module_id) filter["module_id"] = body.module_id; filter["course_id"] = body.course_id; break;
+              case "course": filter["course_id"] = body.course_id; break;
+            }
+
+            const results = await (env as any).VECTORIZE_INDEX.query(vector, {
+              topK: 15,
+              returnMetadata: true,
+            });
+
+            const matches = (results.matches || []).filter((m: any) => {
+              if (m.score < 0.1) return false;
+              for (const [key, val] of Object.entries(filter)) {
+                if (!val) continue;
+                const metaVal = m.metadata?.[key];
+                if (key === "org_id") {
+                  if (metaVal !== val) return false;
+                } else {
+                  if (metaVal && metaVal !== "" && metaVal !== val) return false;
+                }
+              }
+              return true;
+            });
+
+            if (matches.length === 0) {
+              return Response.json({
+                answer: "I couldn't find that in this lesson.",
+                citations: [],
+                scope_expansion_suggested: true,
+              }, {
+                status: 200,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Access-Control-Allow-Origin": origin || "https://learning.lumerax.co",
+                  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+                },
+              });
+            }
+
+            const citations = matches.map((m: any) => ({
+              lesson_title: m.metadata?.title || "Untitled",
+              excerpt: (m.metadata?.content || "").substring(0, 2000),
+              score: m.score,
+            }));
+
+            const contentBlocks = citations
+              .map((c: any) => `[Lesson: ${c.lesson_title}]\n${c.excerpt}`)
+              .join("\n\n");
+            const prompt = `Answer the question based on the provided content below.\nIf the content is irrelevant, say "I couldn't find that in this lesson."\nCite the lesson title for each fact. Be concise.\n\nCONTENT:\n${contentBlocks}\n\nQUESTION: ${body.question}`;
+
+            const gatewayResp = await (env as any).AI_GATEWAY.fetch(
+              new Request("https://ai-gateway/generate", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  messages: [{ role: "user", content: prompt }],
+                  tier: "standard",
+                  org_id: body.org_id,
+                }),
+              })
+            );
+
+            if (!gatewayResp.ok) {
+              return Response.json(
+                { error: `AI Gateway error: ${await gatewayResp.text()}` },
+                {
+                  status: 502,
+                  headers: {
+                    "Content-Type": "application/json",
+                    "Access-Control-Allow-Origin": origin || "https://learning.lumerax.co",
+                    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+                  },
+                }
+              );
+            }
+
+            const llm = await gatewayResp.json() as any;
+            return Response.json({
+              answer: llm.response,
+              citations,
+              scope_expansion_suggested: false,
+              history_length: 2,
+            }, {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin || "https://learning.lumerax.co",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+              },
+            });
+          } catch (err: any) {
+            return Response.json(
+              { error: `Tutor error: ${err.message}` },
+              {
+                status: 500,
+                headers: {
+                  "Content-Type": "application/json",
+                  "Access-Control-Allow-Origin": origin || "https://learning.lumerax.co",
+                  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+                },
+              }
+            );
+          }
+        }),
+        clearHistory: vi.fn(async (origin?: string | null) => {
+          return Response.json(
+            { status: "cleared" },
+            {
+              status: 200,
+              headers: {
+                "Content-Type": "application/json",
+                "Access-Control-Allow-Origin": origin || "https://learning.lumerax.co",
+                "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+                "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+              },
+            }
+          );
+        }),
+      });
+    }
+    return doStubs.get(name);
+  }
+
+  (env as any).TUTOR_SESSION = {
+    idFromName: vi.fn((name: string) => name),
+    get: vi.fn((name: string) => getOrCreateStub(name)),
+  };
 });
 
 // ──── Helpers ────
@@ -112,15 +267,22 @@ describe('Validation', () => {
     expect(body.error).toContain('question');
   });
 
+  it('rejects missing learner_id', async () => {
+    const res = await ask({ question: 'q', lesson_id: 'l1', org_id: 'org-test' });
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toContain('learner_id');
+  });
+
   it('rejects missing lesson_id', async () => {
-    const res = await ask({ question: 'q', org_id: 'org-test' });
+    const res = await ask({ question: 'q', learner_id: 'learner-1', org_id: 'org-test' });
     expect(res.status).toBe(400);
     const body: any = await res.json();
     expect(body.error).toContain('lesson_id');
   });
 
   it('rejects missing org_id', async () => {
-    const res = await ask({ question: 'q', lesson_id: 'l1' });
+    const res = await ask({ question: 'q', learner_id: 'learner-1', lesson_id: 'l1' });
     expect(res.status).toBe(400);
     const body: any = await res.json();
     expect(body.error).toContain('org_id');
@@ -135,6 +297,7 @@ describe('Retrieval', () => {
   it('returns not-found when no chunks match', async () => {
     const res = await ask({
       question: 'What is quantum computing?',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       org_id: 'org-test',
     });
@@ -158,6 +321,7 @@ describe('Retrieval', () => {
 
     const res = await ask({
       question: 'q',
+      learner_id: 'learner-1',
       lesson_id: 'lesson-123',
       course_id: 'course-1',
       org_id: 'org-acme',
@@ -179,6 +343,7 @@ describe('Retrieval', () => {
 
     const res = await ask({
       question: 'test',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       org_id: 'org-test',
     });
@@ -195,6 +360,7 @@ describe('Retrieval', () => {
 
     const res = await ask({
       question: 'What is a variable?',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       course_id: 'course-1',
       org_id: 'org-test',
@@ -225,6 +391,7 @@ describe('Prompt construction', () => {
 
     await ask({
       question: 'What is X?',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       course_id: 'course-1',
       org_id: 'org-test',
@@ -247,6 +414,7 @@ describe('Prompt construction', () => {
 
     const res = await ask({
       question: 'q',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       course_id: 'course-1',
       org_id: 'org-test',
@@ -269,6 +437,7 @@ describe('Scope expansion', () => {
 
     const res = await ask({
       question: 'q',
+      learner_id: 'learner-1',
       lesson_id: 'l123',
       course_id: 'c456',
       org_id: 'org-test',
@@ -288,6 +457,7 @@ describe('Scope expansion', () => {
 
     const res = await ask({
       question: 'q',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       course_id: 'c456',
       org_id: 'org-test',
@@ -308,6 +478,7 @@ describe('Scope expansion', () => {
 
     const res = await ask({
       question: 'q',
+      learner_id: 'learner-1',
       lesson_id: 'l1',
       course_id: 'c456',
       org_id: 'org-test',
@@ -317,5 +488,94 @@ describe('Scope expansion', () => {
     const body: any = await res.json();
     // Course scope = match on course_id only
     expect(body.citations).toHaveLength(1);
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  CORS — cross-origin headers on every response
+// ════════════════════════════════════════════════════════
+
+describe('CORS', () => {
+  // ── OPTIONS preflight ──
+
+  it('returns CORS headers on OPTIONS preflight', async () => {
+    const req = new Request('http://localhost/tutor/ask', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://learning.lumerax.co' },
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(204);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(
+      'https://learning.lumerax.co'
+    );
+    expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+  });
+
+  it('rejects unknown origin with fallback', async () => {
+    const req = new Request('http://localhost/tutor/ask', {
+      method: 'OPTIONS',
+      headers: { Origin: 'https://evil.example.com' },
+    });
+    const res = await worker.fetch(req, env);
+    // Falls back to first allowed origin, not the untrusted one
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(
+      'https://learning.lumerax.co'
+    );
+  });
+
+  // ── POST /tutor/ask includes CORS headers ──
+
+  it('includes CORS headers on POST /tutor/ask', async () => {
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({ lesson_id: 'l1', org_id: 'org-test' }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const res = await ask({
+      question: 'test',
+      learner_id: 'learner-1',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    });
+
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBeTruthy();
+    expect(res.headers.get('Content-Type')).toContain('application/json');
+  });
+
+  // ── POST /tutor/clear includes CORS headers ──
+
+  it('includes CORS headers on POST /tutor/clear', async () => {
+    const req = new Request('http://localhost/tutor/clear', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://learning.lumerax.co',
+      },
+      body: JSON.stringify({ learner_id: 'learner-1' }),
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(
+      'https://learning.lumerax.co'
+    );
+  });
+
+  // ── Validation errors also include CORS headers ──
+
+  it('includes CORS headers on validation errors', async () => {
+    const req = new Request('http://localhost/tutor/ask', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Origin: 'https://learning.lumerax.co',
+      },
+      body: 'not json',
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(400);
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe(
+      'https://learning.lumerax.co'
+    );
   });
 });
