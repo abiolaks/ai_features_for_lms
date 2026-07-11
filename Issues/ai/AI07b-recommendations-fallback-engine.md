@@ -76,35 +76,74 @@ Return JSON: [{ course_id, score (0-100), reason, fit_level: 'strong'|'moderate'
 
 ---
 
+## UX: Where Recommendations Appear
+
+Recommendations are not a destination page — they're an **embedded component** rendered on multiple pages. The LMS frontend calls the Worker depending on what page it's rendering:
+
+```
+Learner logs in
+     │
+     ▼
+┌─ DASHBOARD ────────────────────────────┐
+│  Recommended for you                   │
+│  (personalized to this learner)        │ ← GET /recommendations
+└────────────────────────────────────────┘
+     │
+     │ clicks a course
+     ▼
+┌─ COURSE DETAIL PAGE ───────────────────┐
+│  Similar courses                       │
+│  "If you like Python Basics, try..."   │ ← GET /recommendations/similar
+└────────────────────────────────────────┘
+     │
+     │ finishes the course
+     ▼
+┌─ COURSE COMPLETE PAGE ─────────────────┐
+│  🎉 Congratulations!                   │
+│  What's next?                          │ ← GET /recommendations/next
+└────────────────────────────────────────┘
+```
+
+Three contexts, three different recommendation strategies:
+
+| Context | Endpoint | What it means | Dominant signals |
+|---------|----------|---------------|-----------------|
+| Dashboard | `/recommendations` | "What should this person learn?" | All 4, full personalization |
+| Course page | `/recommendations/similar` | "What's similar to this course?" | Content (Vectorize) + collaborative |
+| Completion | `/recommendations/next` | "What builds on this course?" | Prerequisite chain + collaborative + skill gaps |
+
+---
+
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│              AI07b Recommendations Worker                │
-│                                                          │
-│  GET /recommendations?learner_id={id}&org_id={id}       │
-│  GET /recommendations/next?learner_id={id}&course_id={id}│
-│                                                          │
-│  ┌───────────────────────────────────────────────────┐  │
-│  │ 1. Check KV cache → hit: return immediately       │  │
-│  │ 2. Fetch learner: profile + progress + skill gaps │  │
-│  │ 3. Parallel signal computation:                   │  │
-│  │    ├── Signal 1: Content-based (Vectorize)        │  │
-│  │    ├── Signal 2: Collaborative (D1 query)         │  │
-│  │    └── Signal 3: Skill-gap fill (catalog filter)  │  │
-│  │ 4. Merge + deduplicate candidates                 │  │
-│  │ 5. Signal 4: AI scoring via AI03 Gateway          │  │
-│  │ 6. Blend scores: weighted average of all signals  │  │
-│  │ 7. Cache in KV: 24h TTL                           │  │
-│  │ 8. Return ranked recommendations                  │  │
-│  └───────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-        │                │                │
-        ▼                ▼                ▼
-   ┌──────────┐    ┌──────────┐    ┌──────────┐
-   │ Vectorize│    │    D1     │    │ AI03 GW  │
-   │(courses) │    │ (SQLite)  │    │(Workers AI)│
-   └──────────┘    └──────────┘    └──────────┘
+┌──────────────────────────────────────────────────────────────┐
+│                AI07b Recommendations Worker                   │
+│                                                               │
+│  GET /recommendations?learner_id={id}&org_id={id}            │
+│  GET /recommendations/similar?course_id={id}&org_id={id}     │
+│  GET /recommendations/next?learner_id={id}&course_id={id}    │
+│                                                               │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │ 1. Check KV cache → hit: return immediately            │  │
+│  │ 2. Fetch learner: profile + progress + skill gaps      │  │
+│  │ 3. Parallel signal computation:                        │  │
+│  │    ├── Signal 1: Content-based (Vectorize)             │  │
+│  │    ├── Signal 2: Collaborative (D1 query)              │  │
+│  │    └── Signal 3: Skill-gap fill (catalog filter)       │  │
+│  │ 4. Merge + deduplicate candidates                      │  │
+│  │ 5. Signal 4: AI scoring via AI03 Gateway               │  │
+│  │ 6. Blend scores: weighted average of all signals       │  │
+│  │ 7. Cache in KV: 24h TTL                                │  │
+│  │ 8. Return ranked recommendations                       │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+         │                │                │
+         ▼                ▼                ▼
+    ┌──────────┐    ┌──────────┐    ┌──────────┐
+    │ Vectorize│    │    D1     │    │ AI03 GW  │
+    │(courses) │    │ (SQLite)  │    │(Workers AI)│
+    └──────────┘    └──────────┘    └──────────┘
 ```
 
 ---
@@ -126,9 +165,26 @@ Weights are configurable via Worker env vars: `REC_WEIGHT_CONTENT`, `REC_WEIGHT_
 
 ---
 
-## API Contract (same as what AI07 expects)
+## API Contract
+
+All three endpoints return the same response shape. The difference is in which signals are weighted and what data is fed to the engine.
 
 ### `GET /recommendations?learner_id={id}&org_id={id}&limit={n}`
+
+**Use:** Dashboard / home page widget. Personalized to the specific learner.
+**Weighting:** Full 4-signal blend (25/20/20/35).
+
+### `GET /recommendations/similar?course_id={id}&org_id={id}&limit={n}`
+
+**Use:** Course detail page — "If you like this, try these."
+**Weighting:** Content-biased (50/30/0/20). No skill-gap signal — learner is browsing, not filling gaps. Content similarity (Vectorize) is the dominant signal. Collaborative adds "others who took this also took..."
+
+### `GET /recommendations/next?learner_id={id}&org_id={id}&course_id={id}`
+
+**Use:** Course completion page — "What's next after this course?"
+**Weighting:** Progression-biased (30/35/20/15). Collaborative is dominant (what did similar learners take next?). Difficulty is one step harder than the completed course. Prerequisite chain respected: courses that list the completed course as a prerequisite score higher.
+
+### Response (all endpoints)
 
 ```json
 {
@@ -155,10 +211,6 @@ Weights are configurable via Worker env vars: `REC_WEIGHT_CONTENT`, `REC_WEIGHT_
   "generated_at": "2026-06-30T14:22:00Z"
 }
 ```
-
-### `GET /recommendations/next?learner_id={id}&org_id={id}&course_id={id}`
-
-Returns the same shape but scoped to "what to take after this specific course."
 
 ---
 
@@ -247,10 +299,26 @@ Response format:
 | Key pattern | TTL | Invalidation trigger |
 |-------------|-----|---------------------|
 | `recs:{org_id}:{learner_id}` | 24h | Learner completes a course, enrolls, or profile updates |
+| `recs:similar:{org_id}:{course_id}` | 6h | Course metadata changes, new courses published |
+| `recs:next:{org_id}:{learner_id}:{course_id}` | 24h | Learner completes a course, enrollment data shifts |
 | `recs:popular:{org_id}` | 6h | New course published, enrollment patterns shift |
-| `recs:next:{org_id}:{learner_id}:{course_id}` | 24h | Same as learner cache |
 
 Cache invalidation happens via a simple Worker endpoint: `POST /recommendations/invalidate?learner_id={id}&org_id={id}` — called by AI07 Enhanced Recs Worker when it detects stale data.
+
+---
+
+## The "Similar Courses" Endpoint
+
+`GET /recommendations/similar?course_id={id}&org_id={id}&limit={n}`
+
+This is a browsing-context variant — the learner is exploring, not committing. The engine biases toward content similarity and de-emphasizes progression:
+
+1. Embed the given course's description → query Vectorize for courses with high cosine similarity (Signal 1, dominant at 50%)
+2. Query D1 for "learners who took this course also took..." (Signal 2, 30%)
+3. Skip skill-gap signal entirely (learner is browsing, not filling a known gap)
+4. AI03 ranks candidates by topic fit rather than personal fit (Signal 4, 20%)
+
+Use case: shown on the course detail page — "If you like Python Basics, you might also like..."
 
 ---
 
@@ -258,12 +326,15 @@ Cache invalidation happens via a simple Worker endpoint: `POST /recommendations/
 
 `GET /recommendations/next?learner_id={id}&org_id={id}&course_id={id}`
 
-This is a specialized variant that:
-1. Looks up what learners typically enroll in after `course_id` (collaborative signal from D1)
-2. Finds courses that build on `course_id`'s skills (content signal from Vectorize)
-3. Uses AI03 to rank by personal fit given the learner's current course
+This is a progression-context variant — the learner just finished a course and needs the logical next step. Difficulty is biased one level harder:
 
-Use case: shown on the "Course Complete" page — "What's next?"
+1. Looks up what learners typically enroll in after `course_id` (collaborative signal from D1, dominant at 35%)
+2. Finds courses that list `course_id` as a prerequisite — these get a scoring boost
+3. Finds courses that build on `course_id`'s skills (content signal from Vectorize, 30%)
+4. Checks learner's skill gaps for courses that fill them (Signal 3, 20%)
+5. AI03 ranks by personal fit given the learner's current course (Signal 4, 15%)
+
+Use case: shown on the "Course Complete" page — "Now that you know Python, try Data Structures."
 
 ---
 
@@ -305,12 +376,15 @@ If AI07b is not deployed (LMS recs are working fine), AI07 skips it entirely.
 
 ## Acceptance Criteria
 
+- [ ] Three endpoints: `/recommendations`, `/recommendations/similar`, `/recommendations/next`
+- [ ] Each endpoint uses a different signal weighting appropriate to its UX context
 - [ ] Returns personalized recommendations using at least 2 of 4 signals (content, collaborative, skill-gap, AI)
+- [ ] `/similar` correctly biases toward content similarity (skips skill-gap signal)
+- [ ] `/next` correctly biases toward progression (prerequisite boost, difficulty+1)
 - [ ] Scoring includes clear reasons (not just "you might like this")
-- [ ] KV cache: second call returns <50ms (cache hit)
+- [ ] KV cache: second call returns <50ms (cache hit) for all three endpoints
 - [ ] Cold start learner (no history) still gets recommendations (popular + catalog-based)
 - [ ] Fallback cascade works: degrade gracefully as signals become unavailable
-- [ ] `/recommendations/next` returns context-aware suggestions after course completion
 - [ ] Unit tests: signal computation, score blending, cache hit/miss, cold start
 - [ ] Integration test: full flow with real LMS data
 - [ ] **Observability:** Each signal computation is a separate span in trace
@@ -328,12 +402,14 @@ If AI07b is not deployed (LMS recs are working fine), AI07 skips it entirely.
 | Collaborative signal (D1 query) | ~50 | Medium |
 | Skill-gap signal (LMS fetch + filter) | ~40 | Low |
 | AI scoring signal (AI03 call + prompt) | ~60 | Medium |
-| Score blending + ranking | ~30 | Low |
+| Score blending + per-endpoint weighting | ~40 | Low |
 | KV cache logic | ~30 | Low |
 | Fallback cascade | ~40 | Medium |
-| `/next` endpoint variant | ~30 | Low |
-| Tests (unit + integration) | ~80 | Medium |
-| **Total** | **~430** | **~2-3 days** |
+| `/recommendations` (dashboard) | ~20 | Low |
+| `/similar` endpoint (course page) | ~30 | Low |
+| `/next` endpoint (completion) | ~30 | Low |
+| Tests (unit + integration) | ~100 | Medium |
+| **Total** | **~510** | **~3 days** |
 
 ---
 
@@ -344,13 +420,15 @@ If AI07b is not deployed (LMS recs are working fine), AI07 skips it entirely.
 3. Collaborative signal (D1 queries + enrollment pattern storage)
 4. Skill-gap signal (LMS API fetch + catalog filter)
 5. AI scoring signal (AI03 prompt)
-6. Score blending + ranking with configurable weights
-7. KV cache layer
+6. Score blending + ranking with configurable weights (per-endpoint weighting)
+7. KV cache layer (all 4 key patterns)
 8. Fallback cascade
-9. `/next` endpoint
-10. Observability spans
-11. Tests
-12. Integration with AI07 Enhanced Recs Worker
+9. `/recommendations` endpoint (dashboard — all signals)
+10. `/recommendations/similar` endpoint (course page — content-biased)
+11. `/recommendations/next` endpoint (completion — progression-biased)
+12. Observability spans
+13. Tests
+14. Integration with AI07 Enhanced Recs Worker
 
 ---
 
@@ -371,5 +449,6 @@ If AI07b is not deployed (LMS recs are working fine), AI07 skips it entirely.
 - **AI06 Learning Paths** — different problem (sequenced curriculum vs. single-course suggestions)
 - **LMS catalog** — we read it, don't duplicate it
 - **LMS skill gaps** — we consume them, don't compute them
+- **LMS frontend rendering** — the LMS decides where and how to display each recommendation widget
 
-AI07b is a **recommendation engine**. AI07 is a **recommendation enhancer**. They serve different purposes but compose together.
+AI07b is a **recommendation engine** embedded in multiple LMS pages. AI07 is a **recommendation enhancer**. They serve different purposes but compose together.
