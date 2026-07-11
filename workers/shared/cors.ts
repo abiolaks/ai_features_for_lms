@@ -5,25 +5,59 @@
 // CORS headers + OPTIONS preflight handling, the browser blocks
 // every cross-origin request. Every Worker that serves the LMS
 // frontend must use these helpers.
+//
+// IMPORTANT: Durable Object RPC methods (e.g. session.ask())
+// return Response objects directly to the browser — they bypass
+// the main worker's fetch handler. DO methods MUST use this
+// module's json() helper (not a local copy) to ensure CORS
+// headers are present on every response.
+//
+// BUG REFERENCE (2026-07-10): ai-tutor CORS failures.
+// DO methods in TutorSession.ts used a local json() function
+// that lacked CORS headers. Browser blocked all cross-origin
+// responses from /tutor/ask and /tutor/clear with:
+//   "No 'Access-Control-Allow-Origin' header is present"
+// Fix: imported shared json() from this module, passed origin
+// from the fetch handler into DO RPC calls.
 // ============================================================
 
-const CORS_HEADERS: Record<string, string> = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
-  "Access-Control-Max-Age": "86400",
-};
+const ALLOWED_ORIGINS = [
+  "https://learning.lumerax.co",
+  "https://lms-staging.azurewebsites.net",
+];
+
+/**
+ * Build CORS headers for a given origin.
+ * If the origin is in the allowlist, echo it back (required for
+ * credentialed requests). If not, fall back to the first entry.
+ * Call without an argument for wildcard-compatible responses.
+ */
+export function corsHeadersFor(origin?: string | null): Record<string, string> {
+  const allowed =
+    origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  return {
+    "Access-Control-Allow-Origin": allowed,
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization, X-API-Key",
+    "Access-Control-Max-Age": "86400",
+  };
+}
 
 /**
  * Return a JSON response with CORS headers.
- * Use this instead of building `new Response()` manually.
+ * Accepts an optional origin string so DO methods (which don't
+ * have access to the original Request) can still emit correct
+ * per-origin CORS headers.
+ *
+ *   json({ answer: "hi" })              // default origin
+ *   json({ answer: "hi" }, 200, origin)  // specific origin
  */
-export function json(data: unknown, status = 200): Response {
+export function json(data: unknown, status = 200, origin?: string | null): Response {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
-      ...CORS_HEADERS,
+      ...corsHeadersFor(origin),
     },
   });
 }
@@ -39,7 +73,7 @@ export function handleCors(req: Request): Response | null {
   if (req.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: CORS_HEADERS,
+      headers: corsHeadersFor(req.headers.get("Origin")),
     });
   }
   return null;

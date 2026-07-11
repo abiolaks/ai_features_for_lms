@@ -87,7 +87,7 @@ export default {
       const session = env.TUTOR_SESSION.get(
         env.TUTOR_SESSION.idFromName(`session-${body.learner_id}`)
       );
-      return session.clearHistory();
+      return session.clearHistory(req.headers.get("Origin"));
     }
 
     // POST /tutor/ask — route to the learner's DO
@@ -103,6 +103,9 @@ export default {
       if (!body.learner_id) return json({ error: "missing_field: learner_id" }, 400);
       if (!body.lesson_id) return json({ error: "missing_field: lesson_id" }, 400);
       if (!body.org_id) return json({ error: "missing_field: org_id" }, 400);
+
+      // Attach origin for CORS headers in DO response
+      body.origin = req.headers.get("Origin");
 
       // Deterministic routing: same learner → same DO instance
       const session = env.TUTOR_SESSION.get(

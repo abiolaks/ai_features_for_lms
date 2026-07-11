@@ -7,6 +7,7 @@
 // ============================================================
 
 import { DurableObject } from "cloudflare:workers";
+import { json } from "../../shared/cors";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
 const SCORE_THRESHOLD = 0.1;
@@ -23,6 +24,7 @@ interface AskRequest {
   org_id: string;
   expand_scope?: "lesson" | "module" | "course";
   module_id?: string;
+  origin?: string | null;  // set by fetch handler for CORS
 }
 
 interface Citation {
@@ -119,6 +121,7 @@ export class TutorSession extends DurableObject<Env> {
   // ── HTTP RPC: ask a question (backward compat, no streaming) ──
 
   async ask(body: AskRequest): Promise<Response> {
+    const origin = body.origin;
     try {
       const history = this.loadHistory();
       const { prompt, citations } = await this.buildGroundedPrompt(body, history);
@@ -128,7 +131,7 @@ export class TutorSession extends DurableObject<Env> {
           answer: "I couldn't find that in this lesson.",
           citations: [],
           scope_expansion_suggested: true,
-        });
+        }, 200, origin);
       }
 
       // Non-streaming call to gateway
@@ -145,7 +148,7 @@ export class TutorSession extends DurableObject<Env> {
       );
 
       if (!gatewayResp.ok) {
-        return json({ error: `AI Gateway error: ${await gatewayResp.text()}` }, 502);
+        return json({ error: `AI Gateway error: ${await gatewayResp.text()}` }, 502, origin);
       }
 
       const llm = await gatewayResp.json() as any;
@@ -156,17 +159,17 @@ export class TutorSession extends DurableObject<Env> {
         citations,
         scope_expansion_suggested: false,
         history_length: history.length + 2,
-      });
+      }, 200, origin);
     } catch (err: any) {
-      return json({ error: `Tutor error: ${err.message}` }, 500);
+      return json({ error: `Tutor error: ${err.message}` }, 500, origin);
     }
   }
 
   // ── RPC: clear conversation history ──
 
-  async clearHistory(): Promise<Response> {
+  async clearHistory(origin?: string | null): Promise<Response> {
     this.ctx.storage.sql.exec("DELETE FROM messages");
-    return json({ status: "cleared" });
+    return json({ status: "cleared" }, 200, origin);
   }
 
   // ═══════════════════════════════════════════════════════
@@ -392,9 +395,4 @@ function buildPrompt(history: MessageRow[], citations: Citation[], question: str
   return parts.join("\n");
 }
 
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
+
