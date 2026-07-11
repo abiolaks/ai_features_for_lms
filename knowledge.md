@@ -1,3 +1,144 @@
+## 2026-07-11 — Session: Webhooks vs Local Backfill, Content Ownership, LMS Responsibilities
+
+### Who Runs the Backfill?
+
+The `backfill_all.py` script is a **convenience for the first org only**. It calls the same HTTP endpoints the LMS should call directly. The goal is to eliminate the need for local scripts entirely.
+
+### Two Paths for Content Indexing
+
+**Path A — First org, one-time seed (already done):**
+```bash
+python3 scripts/backfill_all.py --org-id "7591945d-..."
+```
+Indexes everything in Stream + R2 under one org. Works because there's only one org.
+
+**Path B — Subsequent orgs, or any org with webhooks wired:**
+The LMS calls the indexing worker directly — same endpoints, same auth:
+
+```
+POST https://ai-indexing.yomi-alarape.workers.dev/index
+Header: X-Webhook-Secret
+Body: { event: "publish", org_id: "ORG-UUID", entity: {...} }
+
+POST https://ai-indexing.yomi-alarape.workers.dev/extract-pdf
+Header: X-Webhook-Secret
+Body: { r2Key: "...", lesson_id: "...", title: "...", org_id: "ORG-UUID" }
+```
+
+The LMS loops through its own content (which it owns) and POSTs each item. **No local script. No JSON handoff. No human in the loop.**
+
+### Why the LMS Must Do This
+
+Stream and R2 are shared — no org-level partitioning. The indexing worker has no way to know which content belongs to which org:
+- Stream: all videos mixed together, no org metadata
+- R2: all PDFs mixed together, UUID-based paths, no org metadata
+
+**Only the LMS database knows org → content mapping.** The LMS is the source of truth.
+
+### The content.json Handoff (Temporary, If Needed)
+
+If the LMS hasn't built webhook integration yet, a temporary workaround exists:
+
+1. LMS admin exports content list for the new org as JSON
+2. The JSON file is handed to the AI infra person
+3. They run: `python3 scripts/backfill_all.py --org-id "ORG-UUID" --from-json export.json`
+
+This is a **stopgap**. The target state is: LMS publishes → webhook fires → content is indexed. Zero manual steps.
+
+### What the LMS Team Needs to Implement
+
+| Item | Value |
+|------|-------|
+| Indexing endpoint | `POST https://ai-indexing.yomi-alarape.workers.dev/index` |
+| PDF extraction endpoint | `POST https://ai-indexing.yomi-alarape.workers.dev/extract-pdf` |
+| Deindex endpoint | `POST https://ai-indexing.yomi-alarape.workers.dev/deindex` |
+| Auth header | `X-Webhook-Secret: <shared secret>` |
+| When to call `/index` | Course/lesson published or republished |
+| When to call `/extract-pdf` | PDF/PPT uploaded to a lesson |
+| When to call `/deindex` | Course/lesson unpublished or deleted |
+| Content type detection | `contentType: "video"` or `"pdf"` / `"ppt"` |
+
+### Key Decisions Made
+
+1. **LMS is the source of truth for content→org mapping.** The indexing worker does not discover org ownership.
+2. **Webhooks are the target state.** Local backfill scripts are a temporary convenience, not a permanent workflow.
+3. **Single Vectorize index, multi-org.** Vector IDs include org_id (`lesson-{org_id}-{entity_id}-chunk{i}`) to prevent collisions. Metadata filter enforces isolation at query time.
+4. **New org onboarding flow:** LMS webhook integration must be built → LMS pushes existing content via webhooks → done. No local scripts needed once webhooks exist.
+
+---
+
+## 2026-07-11 — Session: LMS AI Tutor Integration — Backfill, org_id Discovery, expand_scope
+
+### Context
+
+The LMS (`learning.lumerax.co`) integrated the AI tutor, but learners got "The AI tutor is preparing for this lesson. Check back in a few minutes." when asking questions about slides.
+
+### What We Did
+
+**1. Diagnosed the root cause:** Vectorize had zero content for the LMS's production `org_id`. All previous indexing used `dev-org`.
+
+**2. Discovered the org_id:**
+- Checked the LMS public API: `GET https://learning.lumerax.co/api/public/courses?per_page=100`
+- Found `organizationId: "7591945d-10ba-4a39-adde-a495c2c9449b"` in course records
+- Alternative method: Browser DevTools → Network tab → find POST to `ai-tutor.../tutor/ask` → check `org_id` in request body
+
+**3. Fixed indexing worker** (`workers/ai-indexing/src/index.ts`):
+- `GET /diag-index/:videoId/:title` was hardcoding `org_id: "dev-org"`
+- Added `?org_id=...` query param support to `handleDiagIndex()`
+- `GET /diag-extract` already supported `?org_id=...`
+- Deployed via `npx wrangler deploy`
+
+**4. Created comprehensive backfill script** (`scripts/backfill_all.py`):
+- Supports `--org-id`, `--dry-run`, `--skip-videos`, `--skip-pdfs`
+- Auto-filters non-course PDFs (policy docs, duplicates, UUID-named generics)
+- Derives lesson_id and title from R2 filenames
+
+**5. Ran backfill:**
+```bash
+python3 scripts/backfill_all.py --org-id "7591945d-10ba-4a39-adde-a495c2c9449b"
+```
+- 16/16 videos indexed (transcripts → chunks → embeddings → Vectorize)
+- 40/40 PDFs queued for extraction and indexing
+
+**6. Verified tutor integration** with 3 test questions:
+- ✅ Answers grounded in real course transcripts
+- ✅ Citations link to specific lessons (e.g., "Module 8 Lesson 3 Core Lecture")
+- ✅ Conversation history maintained across turns
+
+### expand_scope Parameter
+
+The tutor supports three search scopes controlled by `expand_scope`:
+
+| Scope | Filters by | Use case |
+|-------|-----------|----------|
+| `"lesson"` (default) | `org_id` + `lesson_id` | Slide-specific question |
+| `"module"` | `org_id` + `module_id` + `course_id` | Module-spanning question |
+| `"course"` | `org_id` + `course_id` | "What is this course about?" |
+
+### Key Files Modified/Created
+
+- `workers/ai-indexing/src/index.ts` — Added `orgId` param to `handleDiagIndex()`
+- `scripts/backfill_all.py` — **NEW** comprehensive backfill script
+- `scripts/index_all_videos.py` — Updated to use `DEFAULT_ORG_ID`
+- `.agents/skills/ai-indexing-knowledge/BLOCKERS.md` — Added blocker entry
+
+### API Contract for LMS Integration
+
+```json
+POST /tutor/ask
+{
+  "question": "What is AI-driven innovation?",
+  "learner_id": "user-123",
+  "lesson_id": "module-1-lesson-3-core-lecture",
+  "course_id": "ai-business-innovation",
+  "org_id": "7591945d-10ba-4a39-adde-a495c2c9449b",
+  "expand_scope": "lesson",
+  "module_id": "module-1"
+}
+```
+
+---
+
 ## Session: — AI01: PDF Text Extraction — Four Failed Approaches Before unpdf
 
 **Question:** How do we extract text from the 31 PDFs in the `lms-content-staging` R2 bucket so they can be indexed and searched by the tutor?
