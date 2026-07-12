@@ -1,3 +1,100 @@
+## 2026-07-11 — Session: course_id/module_id Missing in Vectorize — Filter Noise Problem
+
+### Problem
+
+Backfill ran successfully but did NOT populate `course_id` and `module_id` in Vectorize metadata. The diag-index endpoint only sends `videoId` and `title` — no course/module context. All 16 videos have `course_id: ""` and `module_id: ""`.
+
+When the LMS sends `expand_scope: "module"` with `module_id: "9195d-..."`, the filter logic treats empty metadata as a wildcard:
+
+```typescript
+// In TutorSession.ts buildFilter()
+// course_id, module_id, lesson_id: skip if metadata is empty (unset)
+if (metaVal && metaVal !== "" && metaVal !== val) return false;
+// Empty metadata → skip this filter → chunk passes regardless
+```
+
+**Result:** All 16 videos pass the module/course filter regardless of what the LMS sends. The LLM gets a mix of AI content + Jira tutorials + logo animations → says "I couldn't find that" because irrelevant content drowns out the signal.
+
+### Test Results (Proof)
+
+| expand_scope | course_id in Vectorize | Result |
+|-------------|----------------------|--------|
+| `"module"` | `""` (empty) | ❌ 15 citations from 12 sources, half irrelevant → "I couldn't find that" |
+| `"course"` | `""` (empty) | ❌ Same noise problem |
+| `"lesson"` | `""` (empty) + wrong lesson_id | ❌ Zero matches (UUID mismatch) |
+| `"course"` | Correct UUID in metadata | ✅ Only relevant content → correct answer |
+
+### Fix: LMS Must Export Content Map
+
+The LMS is the only system that knows which lesson belongs to which course/module. It must export a JSON file mapping each lesson to its parent context:
+
+```json
+{
+  "content": [
+    {
+      "id": "<lesson-uuid-from-lms-db>",
+      "title": "Module 1 Lesson 1: Foundations of AI",
+      "contentType": "video",
+      "cloudflareVideoId": "f73fe2ef...",
+      "course_id": "<parent-course-uuid>",
+      "module_id": "<parent-module-uuid>"
+    },
+    {
+      "id": "<lesson-uuid>",
+      "title": "Module 1 Lesson 2: Intro Slides",
+      "contentType": "pdf",
+      "r2Key": "content/document/2026/.../file.pdf",
+      "course_id": "<parent-course-uuid>",
+      "module_id": "<parent-module-uuid>"
+    }
+  ]
+}
+```
+
+**SQL the LMS devs would write:**
+```sql
+SELECT 
+    l.id,
+    l.title,
+    l.content_type AS "contentType",
+    l.cloudflare_video_id AS "cloudflareVideoId",
+    l.r2_storage_key AS "r2Key",
+    m.id AS "module_id",
+    c.id AS "course_id"
+FROM lessons l
+JOIN modules m ON l.module_id = m.id
+JOIN courses c ON m.course_id = c.id
+WHERE c.organization_id = '7591945d-10ba-4a39-adde-a495c2c9449b'
+  AND l.status = 'published'
+```
+
+**Field mapping:**
+
+| JSON field | Source | Required? |
+|-----------|--------|-----------|
+| `id` | Lesson UUID | ✅ |
+| `title` | Lesson title | ✅ |
+| `contentType` | `"video"` or `"pdf"` | ✅ |
+| `cloudflareVideoId` | Stream video ID | For videos |
+| `r2Key` | R2 object key | For PDFs |
+| `course_id` | Parent course UUID | ✅ Critical — enables module/course scope filter |
+| `module_id` | Parent module UUID | ✅ Critical — enables module scope filter |
+
+**After receiving the export, run:**
+```bash
+python3 scripts/backfill_all.py \
+  --org-id "7591945d-10ba-4a39-adde-a495c2c9449b" \
+  --from-json lms-export.json
+```
+
+This re-indexes all content with proper `course_id` and `module_id` in Vectorize metadata. The old vectors (with empty metadata) are cleaned up automatically. After this, all three `expand_scope` values work correctly.
+
+### Key Insight
+
+**Without course_id/module_id in Vectorize, the tutor works unreliably even with correct payload.** The LMS payload is not the problem — the Vectorize metadata is. Empty metadata acts as a wildcard in the filter, defeating org/module/course isolation. The LMS export is not optional — it's required for the tutor to function correctly.
+
+---
+
 ## 2026-07-11 — Session: Webhooks vs Local Backfill, Content Ownership, LMS Responsibilities
 
 ### Who Runs the Backfill?
