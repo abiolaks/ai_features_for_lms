@@ -32,6 +32,7 @@ interface AskRequest {
   org_id: string;
   expand_scope?: "lesson" | "module" | "course";
   module_id?: string;
+  origin?: string | null;    // set by fetch handler for CORS
 }
 
 // ════════════════════════════════════════════════════════

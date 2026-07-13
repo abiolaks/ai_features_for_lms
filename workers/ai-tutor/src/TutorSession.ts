@@ -36,6 +36,7 @@ interface Citation {
 interface MessageRow {
   role: string;
   content: string;
+  [key: string]: any;  // satisfy SqlStorageValue constraint
 }
 
 interface Env {
@@ -382,15 +383,15 @@ function buildPrompt(history: MessageRow[], citations: Citation[], question: str
     .map((c) => `[Lesson: ${c.lesson_title}]\n${c.excerpt}`)
     .join("\n\n");
   parts.push(
-    "Answer the question based on the provided content below.",
-    "If the content is irrelevant, say \"I couldn't find that in this lesson.\"",
-    "Cite the lesson title for each fact. Be concise.",
-    "If there is previous conversation, use that context.",
+    "You are a helpful tutor. Answer the question using the provided course content.",
+    "Give detailed, structured answers with specific steps, examples, or explanations from the content.",
+    "If the content truly doesn't address the question at all, say \"I couldn't find that in this lesson.\"",
+    "Cite which lesson each point comes from. Use previous conversation context if available.",
     "",
-    "CONTENT:",
+    "COURSE CONTENT:",
     contentBlocks,
     "",
-    `QUESTION: ${question}`
+    `LEARNER QUESTION: ${question}`
   );
   return parts.join("\n");
 }
