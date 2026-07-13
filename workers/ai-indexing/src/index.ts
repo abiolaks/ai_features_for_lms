@@ -138,7 +138,7 @@ async function embedAndUpsert(
     for (let batch = 0; batch < 3; batch++) {
       const ids = Array.from({ length: 20 }, (_, i) => {
         const chunkIdx = batch * 20 + i;
-        return chunkIdx === 0 ? `lesson-${org_id}-${entity.id}` : `lesson-${org_id}-${entity.id}-chunk${chunkIdx - 1}`;
+        return chunkIdx === 0 ? `lesson-${entity.id}` : `lesson-${entity.id}-chunk${chunkIdx - 1}`;
       });
       const existing = await env.VECTORIZE_INDEX.getByIds(ids);
       const stale = existing.filter((v: any) => v !== null).map((v: any) => v.id);
@@ -157,7 +157,7 @@ async function embedAndUpsert(
     const vector: number[] = Array.isArray(result) ? result : result?.data?.[0] ?? result;
 
     vectors.push({
-      id: `lesson-${org_id}-${entity.id}-chunk${i}`,
+      id: `lesson-${entity.id}-chunk${i}`,
       values: vector,
       metadata: {
         title: entity.title,
@@ -211,11 +211,10 @@ export default {
       return handleDiagIndex(videoId, title, orgId, env);
     }
 
-    // GET /diag-deindex/:lessonId?org_id=... — diagnostic: remove all vectors for a lesson
+    // GET /diag-deindex/:lessonId — diagnostic: remove all vectors for a lesson
     if (req.method === "GET" && path.startsWith("/diag-deindex/")) {
       const lessonId = path.split("/diag-deindex/")[1];
-      const orgId = url.searchParams.get("org_id") || "dev-org";
-      return handleDiagDeindex(lessonId, orgId, env);
+      return handleDiagDeindex(lessonId, env);
     }
 
     // GET /diag-extract?key=... — diagnostic: extract PDF from R2
@@ -388,8 +387,8 @@ async function handleDiagIndex(videoId: string, title: string, orgId: string, en
 //  GET /diag-deindex/:lessonId — Diagnostic deindex (dev)
 // ════════════════════════════════════════════════════════
 
-async function handleDiagDeindex(lessonId: string, orgId: string, env: Env): Promise<Response> {
-  return handleDeindex({ entity: { id: lessonId }, org_id: orgId } as any, env);
+async function handleDiagDeindex(lessonId: string, env: Env): Promise<Response> {
+  return handleDeindex({ entity: { id: lessonId } } as any, env);
 }
 
 async function handleDiagExtract(url: URL, env: Env): Promise<Response> {
@@ -758,15 +757,15 @@ function buildMetadataContent(entity: IndexRequest["entity"]): string {
 // ════════════════════════════════════════════════════════
 
 async function handleDeindex(body: IndexRequest, env: Env): Promise<Response> {
-  const { entity, org_id } = body;
+  const { entity } = body;
   try {
-    // Delete all chunked vectors: lesson-{org_id}-{id}, lesson-{org_id}-{id}-chunk0, ...
+    // Delete all chunked vectors: lesson-{id}, lesson-{id}-chunk0, ...
     // getByIds has a 20-ID limit, so batch in groups of 20
     let totalRemoved = 0;
     for (let batch = 0; batch < 3; batch++) {
       const ids = Array.from({ length: 20 }, (_, i) => {
         const chunkIdx = batch * 20 + i;
-        return chunkIdx === 0 ? `lesson-${org_id}-${entity.id}` : `lesson-${org_id}-${entity.id}-chunk${chunkIdx - 1}`;
+        return chunkIdx === 0 ? `lesson-${entity.id}` : `lesson-${entity.id}-chunk${chunkIdx - 1}`;
       });
       const existing = await env.VECTORIZE_INDEX.getByIds(ids);
       const toDelete = existing.filter((v: any) => v !== null).map((v: any) => v.id);
