@@ -24,6 +24,10 @@
 const ALLOWED_ORIGINS = [
   "https://learning.lumerax.co",
   "https://lms-staging.azurewebsites.net",
+  "null",  // local file:// development
+  "http://localhost:3000",
+  "http://localhost:8000",
+  "http://localhost:5173",
 ];
 
 /**
