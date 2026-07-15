@@ -50,17 +50,18 @@ export default {
 
     // GET /diag-search?q=... — raw Vectorize query (dev diagnostic)
     if (req.method === "GET" && path === "/diag-search") {
-      return handleDiagSearch(url, env);
+      return handleDiagSearch(url, env, req.headers.get("Origin"));
     }
 
-    // GET /tutor/ws?learner_id=... — WebSocket upgrade (streaming tutor)
+    // GET /tutor/ws?learner_id=...&course_id=... — WebSocket upgrade (streaming tutor)
     if (req.method === "GET" && path === "/tutor/ws") {
       const learnerId = url.searchParams.get("learner_id");
+      const courseId = url.searchParams.get("course_id") || "default";
       if (!learnerId) {
         return json({ error: "missing_param: learner_id" }, 400);
       }
       const session = env.TUTOR_SESSION.get(
-        env.TUTOR_SESSION.idFromName(`session-${learnerId}`)
+        env.TUTOR_SESSION.idFromName(`session-${learnerId}-${courseId}`)
       );
       // Forward to DO's fetch() which handles the WebSocket upgrade
       return session.fetch(
@@ -76,7 +77,7 @@ export default {
 
     // POST /tutor/clear — clear a session's history
     if (path === "/tutor/clear") {
-      let body: { learner_id: string };
+      let body: { learner_id: string; course_id?: string };
       try {
         body = await req.json();
       } catch {
@@ -85,8 +86,9 @@ export default {
       if (!body.learner_id) {
         return json({ error: "missing_field: learner_id" }, 400);
       }
+      const courseId = body.course_id || "default";
       const session = env.TUTOR_SESSION.get(
-        env.TUTOR_SESSION.idFromName(`session-${body.learner_id}`)
+        env.TUTOR_SESSION.idFromName(`session-${body.learner_id}-${courseId}`)
       );
       return session.clearHistory(req.headers.get("Origin"));
     }
@@ -105,12 +107,41 @@ export default {
       if (!body.lesson_id) return json({ error: "missing_field: lesson_id" }, 400);
       if (!body.org_id) return json({ error: "missing_field: org_id" }, 400);
 
+      // ── Input guardrails ──
+      // Reject overly long questions (potential abuse/DoS)
+      if (body.question.length > 2000) {
+        return json({ error: "Question too long (max 2000 chars)" }, 400);
+      }
+      // Reject empty/whitespace-only questions
+      if (!body.question.trim()) {
+        return json({ error: "Question cannot be empty" }, 400);
+      }
+      // Basic prompt injection pattern detection
+      const injectionPatterns = [
+        /ignore (all |previous |above )?(instructions|rules|prompt)/i,
+        /system:?\s*(prompt|message|instruction)/i,
+        /you are now|act as|pretend to be|roleplay as/i,
+        /DAN\b|jailbreak|developer mode/i,
+        /\[SYSTEM\]|\[INST\]|<<SYS>>|<\|im_start\|>/i,
+      ];
+      for (const pattern of injectionPatterns) {
+        if (pattern.test(body.question)) {
+          return json({
+            answer: "I'm here to help with course material. Let me know if you have questions about the lessons.",
+            citations: [],
+            scope_expansion_suggested: false,
+          }, 200);
+        }
+      }
+
       // Attach origin for CORS headers in DO response
       body.origin = req.headers.get("Origin");
 
-      // Deterministic routing: same learner → same DO instance
+      // Deterministic routing: same learner + same course → same DO instance
+      // Each course gets its own conversation history
+      const courseId = body.course_id || "default";
       const session = env.TUTOR_SESSION.get(
-        env.TUTOR_SESSION.idFromName(`session-${body.learner_id}`)
+        env.TUTOR_SESSION.idFromName(`session-${body.learner_id}-${courseId}`)
       );
       return session.ask(body);
     }
@@ -123,7 +154,7 @@ export default {
 //  GET /diag-search?q=... — Raw Vectorize diagnostic
 // ════════════════════════════════════════════════════════
 
-async function handleDiagSearch(url: URL, env: Env): Promise<Response> {
+async function handleDiagSearch(url: URL, env: Env, origin?: string | null): Promise<Response> {
   const q = url.searchParams.get("q") || "test";
   try {
     const embedding = await env.AI.run(EMBEDDING_MODEL, { text: q });
@@ -137,9 +168,9 @@ async function handleDiagSearch(url: URL, env: Env): Promise<Response> {
       score: m.score,
       metadata: m.metadata,
     }));
-    return json({ query: q, total: matches.length, vector_dim: vector.length, matches });
+    return json({ query: q, total: matches.length, vector_dim: vector.length, matches }, 200, origin);
   } catch (err: any) {
-    return json({ error: err.message }, 500);
+    return json({ error: err.message }, 500, origin);
   }
 }
 
