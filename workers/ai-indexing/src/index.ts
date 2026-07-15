@@ -202,13 +202,16 @@ export default {
       return handleCheckCaptions(path.split("/captions/")[1], env);
     }
 
-    // GET /diag-index/:videoId/:title?org_id=... — diagnostic: index a single video (dev only)
+    // GET /diag-index/:videoId/:title?org_id=...&course_id=...&module_id=...&lesson_id=...
     if (req.method === "GET" && path.startsWith("/diag-index/")) {
       const parts = path.split("/");
       const videoId = parts[2];
       const title = parts[3] ? decodeURIComponent(parts[3]) : "Untitled";
       const orgId = url.searchParams.get("org_id") || "dev-org";
-      return handleDiagIndex(videoId, title, orgId, env);
+      const courseId = url.searchParams.get("course_id") || "";
+      const moduleId = url.searchParams.get("module_id") || "";
+      const lessonId = url.searchParams.get("lesson_id") || videoId;  // LMS UUID, fall back to videoId
+      return handleDiagIndex(videoId, lessonId, title, orgId, courseId, moduleId, env);
     }
 
     // GET /diag-deindex/:lessonId — diagnostic: remove all vectors for a lesson
@@ -369,16 +372,18 @@ async function handleCheckCaptions(videoId: string, env: Env): Promise<Response>
 //  GET /diag-index/:videoId/:title? — Diagnostic index (dev)
 // ════════════════════════════════════════════════════════
 
-async function handleDiagIndex(videoId: string, title: string, orgId: string, env: Env): Promise<Response> {
+async function handleDiagIndex(videoId: string, lessonId: string, title: string, orgId: string, courseId: string, moduleId: string, env: Env): Promise<Response> {
   return handleIndex({
     event: "publish",
     org_id: orgId,
     entity: {
-      id: videoId,
+      id: lessonId,  // LMS UUID — used as lesson_id in Vectorize metadata
       title,
       contentType: "video",
-      cloudflareVideoId: videoId,
+      cloudflareVideoId: videoId,  // Stream video ID — still needed for caption extraction
       streamStatus: "ready",
+      course_id: courseId,
+      module_id: moduleId,
     },
   }, env);
 }
@@ -396,6 +401,8 @@ async function handleDiagExtract(url: URL, env: Env): Promise<Response> {
   const title = url.searchParams.get("title") || url.searchParams.get("key") || "Untitled";
   const lessonId = url.searchParams.get("lesson_id") || key.split("/").pop()?.replace(/\.pdf$/, "") || "unknown";
   const orgId = url.searchParams.get("org_id") || "dev-org";
+  const courseId = url.searchParams.get("course_id") || "";
+  const moduleId = url.searchParams.get("module_id") || "";
   const preview = url.searchParams.get("preview");
 
   if (preview === "1") {
@@ -414,7 +421,7 @@ async function handleDiagExtract(url: URL, env: Env): Promise<Response> {
     }
   }
 
-  return handleExtractPdf({ r2Key: key, lesson_id: lessonId, title, org_id: orgId }, env);
+  return handleExtractPdf({ r2Key: key, lesson_id: lessonId, title, org_id: orgId, course_id: courseId, module_id: moduleId }, env);
 }
 
 // ════════════════════════════════════════════════════════
@@ -426,6 +433,8 @@ interface ExtractPdfRequest {
   lesson_id: string;
   title: string;
   org_id: string;
+  course_id?: string;
+  module_id?: string;
 }
 
 async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Response> {
@@ -481,6 +490,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
         contentType: key.endsWith(".pptx") ? "ppt" : "pdf",
         content: fullText,
         durationSeconds: fullText.length,
+        course_id: body.course_id || "",
+        module_id: body.module_id || "",
       },
     });
 
