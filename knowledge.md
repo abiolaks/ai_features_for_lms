@@ -1,3 +1,68 @@
+## 2026-07-13 — Session: Demo Questions, expand_scope, LMS Payload Template
+
+### Tested Demo Questions (All Working)
+
+These questions consistently return detailed answers (1,000-2,500 chars) with 14-15 citations:
+
+```
+What is this course about?
+What are the key steps to building an AI-enabled SME?
+How can small businesses start using AI?
+What are the foundations of AI for business?
+Explain AI-driven business innovation
+What does the course say about responsible AI adoption?
+How should a company prioritize AI initiatives?
+What is the role of data in AI adoption?
+How can SMEs build a future-ready organization?
+What are the risks of AI implementation?
+```
+
+### Conversation Follow-ups (Tests History Memory)
+
+```
+Q1: What is AI-driven innovation?
+Q2: Based on what we discussed, what should be the first step?
+Q3: And what comes after that?
+```
+
+### LMS Payload Template
+
+```json
+POST https://ai-tutor.yomi-alarape.workers.dev/tutor/ask
+
+{
+  "question": "How can small businesses start using AI?",
+  "learner_id": "<user-uuid-from-lms>",
+  "org_id": "7591945d-10ba-4a39-adde-a495c2c9449b",
+  "lesson_id": "any",
+  "course_id": "any",
+  "expand_scope": "course"
+}
+```
+
+### Response Shape
+
+```json
+{
+  "answer": "Based on the provided content... (1,000-2,500 chars)",
+  "citations": [
+    {
+      "lesson_title": "Module 2 Lesson 3 Core Lecture",
+      "excerpt": "...text from lesson...",
+      "score": 0.836
+    }
+  ],
+  "scope_expansion_suggested": false,
+  "history_length": 2
+}
+```
+
+### What Still Needs LMS Export
+
+Lesson/module-level scoping (picking a specific course and only getting that course's content). Requires LMS to export content map JSON with real course_id/module_id, then re-run backfill with --from-json.
+
+---
+
 ## 2026-07-11 — Session: course_id/module_id Missing in Vectorize — Filter Noise Problem
 
 ### Problem
