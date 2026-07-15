@@ -62,10 +62,18 @@ def get_json(url: str) -> dict:
         return json.loads(resp.read().decode())
 
 
-def index_video(video_id: str, title: str, org_id: str) -> dict:
-    """Call GET /diag-index/:videoId/:title?org_id=... to index a single video."""
+def index_video(video_id: str, title: str, org_id: str, course_id: str = "", module_id: str = "", lesson_id: str = "") -> dict:
+    """Call GET /diag-index/:videoId/:title?org_id=...&course_id=...&module_id=...&lesson_id=..."""
     safe_title = urllib.request.quote(title, safe="")
-    url = f"{INDEXING_BASE}/diag-index/{video_id}/{safe_title}?org_id={urllib.request.quote(org_id)}"
+    params = {"org_id": org_id}
+    if course_id:
+        params["course_id"] = course_id
+    if module_id:
+        params["module_id"] = module_id
+    if lesson_id:
+        params["lesson_id"] = lesson_id  # LMS UUID for Vectorize metadata
+    qs = urllib.parse.urlencode(params)
+    url = f"{INDEXING_BASE}/diag-index/{video_id}/{safe_title}?{qs}"
     req = urllib.request.Request(url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -74,15 +82,20 @@ def index_video(video_id: str, title: str, org_id: str) -> dict:
         return {"error": str(e)}
 
 
-def index_pdf(r2_key: str, title: str, lesson_id: str, org_id: str) -> dict:
-    """Call GET /diag-extract?key=...&title=...&lesson_id=...&org_id=..."""
-    params = urllib.parse.urlencode({
+def index_pdf(r2_key: str, title: str, lesson_id: str, org_id: str, course_id: str = "", module_id: str = "") -> dict:
+    """Call GET /diag-extract?key=...&title=...&lesson_id=...&org_id=...&course_id=...&module_id=..."""
+    params = {
         "key": r2_key,
         "title": title,
         "lesson_id": lesson_id,
         "org_id": org_id,
-    })
-    url = f"{INDEXING_BASE}/diag-extract?{params}"
+    }
+    if course_id:
+        params["course_id"] = course_id
+    if module_id:
+        params["module_id"] = module_id
+    qs = urllib.parse.urlencode(params)
+    url = f"{INDEXING_BASE}/diag-extract?{qs}"
     req = urllib.request.Request(url, headers=HEADERS)
     try:
         with urllib.request.urlopen(req, timeout=120) as resp:
@@ -167,6 +180,9 @@ def discover_from_json(json_path: str):
                 "video_id": item.get("cloudflareVideoId", item.get("video_id", "")),
                 "title": item.get("title", "Untitled"),
                 "duration": item.get("durationSeconds", item.get("duration", 0)),
+                "course_id": item.get("course_id", ""),
+                "module_id": item.get("module_id", ""),
+                "lesson_id": item.get("id", ""),  # LMS UUID for Vectorize metadata
             })
         elif content_type in ("pdf", "ppt", "pptx", "document"):
             pdfs.append({
@@ -174,6 +190,8 @@ def discover_from_json(json_path: str):
                 "title": item.get("title", "Untitled"),
                 "lesson_id": item.get("id", item.get("lesson_id", "")),
                 "size": item.get("size", 0),
+                "course_id": item.get("course_id", ""),
+                "module_id": item.get("module_id", ""),
             })
 
     return videos, pdfs
@@ -271,7 +289,7 @@ The --from-json file should be exported by the LMS and contain only that org's c
 
             print(f"  {status} {title} ({duration:.0f}s) id={vid[:16]}...", end=" ", flush=True)
             t0 = time.monotonic()
-            result = index_video(vid, title, org_id)
+            result = index_video(vid, title, org_id, video.get("course_id", ""), video.get("module_id", ""), video.get("lesson_id", ""))
             dt = time.monotonic() - t0
 
             status_result = result.get("status", result.get("error", "?"))
@@ -313,7 +331,7 @@ The --from-json file should be exported by the LMS and contain only that org's c
 
             print(f"  {status} {filename} ({size_kb:.0f}KB) → \"{title}\"", end=" ", flush=True)
             t0 = time.monotonic()
-            result = index_pdf(r2_key, title, lesson_id, org_id)
+            result = index_pdf(r2_key, title, lesson_id, org_id, pdf.get("course_id", ""), pdf.get("module_id", ""))
             dt = time.monotonic() - t0
 
             status_result = result.get("status", result.get("error", "?"))
