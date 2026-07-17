@@ -104,11 +104,23 @@ export default {
     const preflight = handleCors(req);
     if (preflight) return preflight;
 
+    const url = new URL(req.url);
+
+    // GET /diag-catalog — diagnostic: check what LMS returns
+    if (req.method === "GET" && url.pathname === "/diag-catalog") {
+      try {
+        const resp = await fetchLms(env, { path: `/api/v1/catalog` });
+        const text = await resp.text();
+        return json({ status: resp.status, ok: resp.ok, body: text.substring(0, 500) });
+      } catch (e: any) {
+        return json({ error: e.message });
+      }
+    }
+
     if (req.method !== "POST") {
       return json({ error: "Method not allowed" }, 405);
     }
 
-    const url = new URL(req.url);
     if (url.pathname !== "/paths/generate") {
       return json({ error: "Not found" }, 404);
     }
@@ -161,7 +173,7 @@ async function handleGenerate(
     if (resp.ok) {
       const raw = await resp.json() as any;
       const data = raw.data || raw;
-      profile = {
+      const lmsProfile = {
         skills: data.skills || [],
         goals: data.goals || "",
         experience_level: data.experience_level || "beginner",
@@ -169,6 +181,10 @@ async function handleGenerate(
         streak_days: data.gamification?.login_streak || 0,
         points: data.gamification?.total_points || 0,
       };
+      // Only use LMS profile if it has actual data
+      if (lmsProfile.skills.length > 0 || lmsProfile.goals) {
+        profile = lmsProfile;
+      }
       profileFromLms = true;
     }
     endSpan(profileSpan);
@@ -184,20 +200,41 @@ async function handleGenerate(
     const catalogSpan = startSpan("lms.fetch");
     setAttr(catalogSpan, "endpoint", "catalog");
     setAttr(catalogSpan, "org_id", body.org_id);
-    const resp = await fetchLms(env, {
-      path: `/api/v1/catalog`,
-    });
+    
+    // Try authenticated catalog first, fall back to public if empty
+    let resp = await fetchLms(env, { path: `/api/v1/catalog?organization_id=${body.org_id}` });
     setAttr(catalogSpan, "status", resp.status);
+    
     if (resp.ok) {
       const raw = await resp.json() as any;
       const items = raw.data || raw;
-      catalogue = items.map((c: any) => ({
-        title: c.title,
-        difficulty: c.difficultyLevel || c.difficulty,
-        category: c.category,
-        prerequisites: c.prerequisites || [],
-      }));
-      catalogFromLms = true;
+      // If authenticated catalog is empty, try public endpoint
+      if (!items || items.length === 0) {
+        resp = await fetchLms(env, { path: `/api/v1/public/courses` });
+        if (resp.ok) {
+          const publicRaw = await resp.json() as any;
+          const publicItems = publicRaw.data || publicRaw;
+          if (publicItems && publicItems.length > 0) {
+            const lmsCourses = publicItems.map((c: any) => ({
+              title: c.title,
+              difficulty: c.difficultyLevel || c.difficulty,
+              category: c.category,
+              prerequisites: c.prerequisites || [],
+            }));
+            catalogue = lmsCourses;
+            catalogFromLms = true;
+          }
+        }
+      } else {
+        const lmsCourses = items.map((c: any) => ({
+          title: c.title,
+          difficulty: c.difficultyLevel || c.difficulty,
+          category: c.category,
+          prerequisites: c.prerequisites || [],
+        }));
+        catalogue = lmsCourses;
+        catalogFromLms = true;
+      }
     }
     setAttr(catalogSpan, "course_count", catalogue.length);
     endSpan(catalogSpan);
@@ -220,11 +257,15 @@ async function handleGenerate(
       const raw = await resp.json() as any;
       const data = raw.data || raw;
       const enrollments = data.enrollments || [];
-      progress = enrollments.map((e: any) => ({
+      const lmsProgress = enrollments.map((e: any) => ({
         title: e.courseTitle,
         status: e.status === "completed" ? "completed" : "in_progress",
         progress_pct: parseInt(e.progressPercent) || 0,
       }));
+      // Only use LMS data if it returned progress; otherwise keep stub data
+      if (lmsProgress.length > 0) {
+        progress = lmsProgress;
+      }
       progressFromLms = true;
     }
     setAttr(progressSpan, "enrollment_count", progress.length);
