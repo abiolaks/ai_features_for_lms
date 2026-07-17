@@ -12,11 +12,6 @@
     }
   ],
 
-  "vars": {
-    "LMS_GATEWAY_URL": "https://lms-staging-api-gpeze7brdfc9akhj.southafricanorth-01.azurewebsites.net",
-    "LMS_INTERNAL_KEY": ""
-  },
-
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

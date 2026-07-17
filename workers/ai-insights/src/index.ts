@@ -36,7 +36,9 @@ interface AttemptData {
   totalQuestions: number;
   correctAnswers: number;
   timeTakenSeconds: number | null;
-  responses: string[];
+  // Live LMS returns AttemptResponseResource objects; older fixtures
+  // used JSON-encoded strings. normalizeResponse() handles both.
+  responses: unknown[];
 }
 
 interface InsightRequest {
@@ -174,15 +176,16 @@ async function handleGenerate(
     return json(placeholderResponse(), 200);
   }
 
-  // Parse responses to extract per-question details + timing
+  // Normalize responses to extract per-question details + timing.
+  // Live LMS shape (api.json AttemptResponseResource):
+  //   { questionId, selectedOption, isCorrect, timeSpentSeconds,
+  //     correctAnswer, question: { questionText, correctAnswer, ... } }
   const parsedResponses: AttemptResponse[] = [];
-  for (const r of attemptData.responses) {
-    try {
-      parsedResponses.push(JSON.parse(r));
-    } catch {
-      // skip unparseable responses
-    }
+  for (const r of attemptData.responses || []) {
+    const normalized = normalizeResponse(r);
+    if (normalized) parsedResponses.push(normalized);
   }
+  setAttr(dataSpan, 'responses_parsed', parsedResponses.length);
 
   // 2. Fetch assessment metadata
   // api.json: Assessment carries courseId AND moduleId — moduleId is
@@ -248,8 +251,11 @@ async function handleGenerate(
         const raw = await resp.json() as any;
         // LessonResource can degenerate to an empty array — guard for objects
         const items = Array.isArray(raw.data) ? raw.data : [];
+        const quizTitle = assessmentTitle.trim().toLowerCase();
         moduleLessons = items
           .filter((l: any) => l && typeof l === 'object' && l.id && l.title)
+          // Exclude the quiz's own lesson — a quiz is never its own review target
+          .filter((l: any) => String(l.title).trim().toLowerCase() !== quizTitle)
           .map((l: any) => ({
             id: String(l.id),
             title: String(l.title),
@@ -356,7 +362,7 @@ async function handleGenerate(
     const responseText: string =
       typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse);
 
-    const parsed = parseInsight(responseText, reviewLinks, insightSpan);
+    const parsed = parseInsight(responseText, reviewLinks, insightSpan, moduleLessons, courseId);
 
     setAttr(insightSpan, 'ai_status', 'generated');
     setAttr(insightSpan, 'tone_encouraging', true);
@@ -372,6 +378,41 @@ async function handleGenerate(
     endSpan(insightSpan);
     return json(placeholderResponse(), 200);
   }
+}
+
+// ════════════════════════════════════════════════════════
+//  Response Normalizer
+// ════════════════════════════════════════════════════════
+
+/**
+ * Normalize a single attempt response into the internal shape.
+ * Accepts the live LMS object (camelCase, nested `question`) or a
+ * JSON-encoded string (legacy fixtures). Returns null if unusable.
+ */
+function normalizeResponse(raw: unknown): AttemptResponse | null {
+  let r: any = raw;
+  if (typeof r === 'string') {
+    try {
+      r = JSON.parse(r);
+    } catch {
+      return null;
+    }
+  }
+  if (!r || typeof r !== 'object') return null;
+
+  const question = r.question && typeof r.question === 'object' ? r.question : {};
+  const questionText = r.question_text ?? question.questionText ?? '';
+  const correct = r.correct ?? r.isCorrect;
+
+  return {
+    question_id: r.question_id ?? r.questionId ?? question.id ?? '',
+    question_text: String(questionText),
+    selected: r.selected ?? r.selectedOption,
+    correct: typeof correct === 'boolean' ? correct : undefined,
+    timeSpentSeconds:
+      typeof r.timeSpentSeconds === 'number' ? r.timeSpentSeconds : undefined,
+    correct_answer: r.correct_answer ?? r.correctAnswer ?? question.correctAnswer,
+  };
 }
 
 // ════════════════════════════════════════════════════════
@@ -438,6 +479,8 @@ function parseInsight(
   response: string,
   reviewLinks: MissedTopic[],
   insightSpan: SpanContext,
+  lessons: LessonSummary[] = [],
+  courseId = '',
 ): InsightResponse {
   // Extract JSON from response (LLM may wrap in markdown code blocks)
   const codeBlock = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
@@ -458,8 +501,16 @@ function parseInsight(
     const insightText = parsed.insight || parsed.response || parsed.insight_text || '';
     const topicNames: string[] = parsed.missed_topics || parsed.topics || [];
 
-    // Map LLM topic names to review links via token overlap
+    // Map LLM topic names to review links. Prefer a direct match against
+    // lesson titles (the LLM often names topics after lesson content),
+    // then fall back to overlap with question-derived topics, then index.
     const missedTopics: MissedTopic[] = topicNames.map((name: string, i: number) => {
+      if (courseId && lessons.length > 0) {
+        const direct = matchLessonForTopic(name, lessons);
+        if (direct) {
+          return { topic: name, review_link: `/courses/${courseId}/lessons/${direct.id}` };
+        }
+      }
       const nameTokens = tokenize(name);
       let best: MissedTopic | null = null;
       let bestScore = 0;

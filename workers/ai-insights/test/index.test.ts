@@ -49,11 +49,13 @@ const MOCK_ATTEMPT = {
     startedAt: '2026-07-17T10:00:00Z',
     completedAt: '2026-07-17T10:07:00Z',
     canReviewAnswers: true,
+    // Live LMS shape: AttemptResponseResource objects (camelCase,
+    // nested `question` carrying questionText + correctAnswer)
     responses: [
-      '{"question_id":"q1","question_text":"What is a variable?","selected":"A container for data","correct":true,"timeSpentSeconds":15}',
-      '{"question_id":"q2","question_text":"Explain for loops","selected":"Iterates over items","correct":true,"timeSpentSeconds":25}',
-      '{"question_id":"q3","question_text":"What is a while loop?","selected":"A function","correct":false,"timeSpentSeconds":90,"correct_answer":"Repeats while condition is true"}',
-      '{"question_id":"q4","question_text":"What is a list comprehension?","selected":"A type of loop","correct":false,"timeSpentSeconds":70,"correct_answer":"Concise way to create lists"}',
+      { questionId: 'q1', selectedOption: 'A', isCorrect: true, timeSpentSeconds: 15, correctAnswer: 'A', question: { id: 'q1', questionText: 'What is a variable?', correctAnswer: 'A' } },
+      { questionId: 'q2', selectedOption: 'B', isCorrect: true, timeSpentSeconds: 25, correctAnswer: 'B', question: { id: 'q2', questionText: 'Explain for loops', correctAnswer: 'B' } },
+      { questionId: 'q3', selectedOption: 'C', isCorrect: false, timeSpentSeconds: 90, correctAnswer: 'Repeats while condition is true', question: { id: 'q3', questionText: 'What is a while loop?', correctAnswer: 'Repeats while condition is true' } },
+      { questionId: 'q4', selectedOption: 'D', isCorrect: false, timeSpentSeconds: 70, correctAnswer: 'Concise way to create lists', question: { id: 'q4', questionText: 'What is a list comprehension?', correctAnswer: 'Concise way to create lists' } },
     ],
   },
 };
@@ -272,6 +274,50 @@ describe('Insight generation', () => {
     const res = await generateInsight(VALID_BODY);
     const body: any = await res.json();
     expect(body.tone_check).toBe('encouraging');
+  });
+
+  it('handles legacy JSON-string responses (backward compat)', async () => {
+    const legacyAttempt = {
+      ...MOCK_ATTEMPT,
+      data: {
+        ...MOCK_ATTEMPT.data,
+        responses: [
+          '{"question_id":"q3","question_text":"What is a while loop?","selected":"A function","correct":false,"timeSpentSeconds":90,"correct_answer":"Repeats while condition is true"}',
+        ],
+      },
+    };
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/assessments/attempts/')) {
+        return Promise.resolve(new Response(JSON.stringify(legacyAttempt), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/') && !url.includes('attempts')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/modules/') && url.includes('/lessons')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_MODULE_LESSONS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+
+    await generateInsight(VALID_BODY);
+
+    const dataSpan = spanLogs.find((l) => l.includes('"span":"data.fetch"'));
+    const parsed = JSON.parse(dataSpan!);
+    expect(parsed.responses_parsed).toBe(1);
+    expect(parsed.missed_questions).toBe(1);
+  });
+
+  it('parses live LMS object responses into missed questions', async () => {
+    await generateInsight(VALID_BODY);
+
+    const dataSpan = spanLogs.find((l) => l.includes('"span":"data.fetch"'));
+    const parsed = JSON.parse(dataSpan!);
+    expect(parsed.responses_parsed).toBe(4);
+    expect(parsed.missed_questions).toBe(2);
+    expect(parsed.has_review_links).toBe(true);
   });
 
   it('returns encouraging tone for 100% score', async () => {
