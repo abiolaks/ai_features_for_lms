@@ -14,12 +14,10 @@
 | **ai-indexing** | `https://ai-indexing.yomi-alarape.workers.dev` | AI, Stream, R2 (`lms-content-staging`), Vectorize (`lms-lessons`), Queue (`indexing-jobs`) | ❌ Internal |
 | **ai-tutor** | `https://ai-tutor.yomi-alarape.workers.dev` | AI, Vectorize (`lms-lessons`), DO (`TutorSession`), Service→ai-gateway | ✅ |
 | **ai-paths** | `https://ai-paths.yomi-alarape.workers.dev` | Service→ai-gateway | ✅ |
+| **ai-insights** | `https://ai-insights.yomi-alarape.workers.dev` | Service→ai-gateway | ❌ Internal |
 
 **Not deployed (stubs — no `src/index.ts`):**
-- ai-dashboard, ai-insights, ai-recommendations
-
-**Deprecated:**
-- pdf-extractor — failed (Python worker needs `pywrangler`/`pyproject.toml`). PDF/PPT extraction already handled inside ai-indexing via `unpdf`.
+- ai-dashboard, ai-recommendations
 
 ---
 
@@ -42,6 +40,12 @@
 
 ### ai-tutor & ai-gateway
 No secrets needed — use service bindings and Workers AI natively.
+
+### ai-insights
+| Secret | Purpose |
+|--------|---------|
+| `LMS_GATEWAY_URL` | LMS backend URL (attempt, assessment, progress, module lessons) |
+| `LMS_INTERNAL_KEY` | LMS auth key |
 
 ---
 

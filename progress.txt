@@ -1,56 +1,20 @@
 # Project Progress — AI Features for LMS
 
-## Completed
-- [x] AI03 LLM Gateway — deployed, tested, 14/14 tests pass
-- [x] AI01 Content Indexing — deployed, tested, 16/16 tests pass
-  - Extracts transcripts from Cloudflare Stream via REST API
-  - Embeds with qwen3-embedding-0.6b (1024-dim) → Vectorize upsert
-  - Live verified: 815-char transcript indexed and searchable
-  - URL: https://ai-indexing.yomi-alarape.workers.dev
-- [x] AI04 Grounded Q&A Tutor — deployed, tested, 15/15 tests pass
-  - Embeds question → queries Vectorize → grounds in transcript → calls AI03
-  - Scope expansion: lesson → module → course
-  - Live verified: answers grounded in real transcript with citations
-  - URL: https://ai-tutor.yomi-alarape.workers.dev
-- [x] D1 lms-platform — schema created, org-test seeded
-- [x] KV LMS_CACHE — provisioned
-- [x] Queue indexing-jobs — provisioned
-- [x] Vectorize index lms-lessons — 1024-dim cosine, 2 vectors indexed
-- [x] AI Search namespace lms-platform — provisioned (bypassed for Vectorize)
-- [x] API contract documented at docs/api-contract.md
+## MVP — Completed
+- [x] AI03 LLM Gateway — deployed, 14/14 tests pass
+- [x] AI01 Content Indexing — deployed, 16/16 tests pass
+- [x] AI04 Grounded Q&A Tutor — deployed, 15/15 tests pass
+
+## Beyond MVP — Completed
+- [x] AI06 Learning Paths — deployed, 40/40 tests pass
+- [x] AI08 Post-Quiz Insights — deployed, 28/28 tests pass
 
 ## In Progress
-(none)
 
 ## Up Next
-- [ ] AI06 Learning Paths (Week 4)
-- [ ] AI07 Recommendations (Week 5)
-- [ ] AI08 Post-Quiz Insights (Week 3)
-- [ ] AI13 Demo Dashboard (ongoing)
+- [ ] AI07 Recommendations
+- [ ] AI13 Demo Dashboard
 
-## Blocked
-(none)
-
-## Later (production readiness)
-- [ ] LMS_WEBHOOK_SECRET — set when LMS is live
-- [ ] LMS_GATEWAY_URL + LMS_INTERNAL_KEY — set when LMS API is live
-- [ ] Remove post-filter in AI04, use native Vectorize filter: param
-- [ ] Raise score threshold from 0.1 to 0.5
-- [ ] Switch from .workers.dev URLs to custom domain
-
-- Implemented AI01 Content Indexing Pipeline (replaced diagnostic stub)
-- Fixed VTT fetch: CLOUDFLARE_STREAM_API_TOKEN + CLOUDFLARE_ACCOUNT_ID were empty
-- Bypassed AI Search beta bug → direct Vectorize (Workers AI embed + upsert)
-- Fixed dimension mismatch: qwen3-embedding-0.6b outputs 1024-dim, not 384
-- Implemented AI04 Grounded Q&A Tutor with Vectorize retrieval
-- Tuned prompt: "based on" instead of "ONLY" to prevent over-rejection
-- Created API contract (docs/api-contract.md) for backend engineer handoff
-- Added session-knowledge + ai-indexing-knowledge agent skills
-- All changes committed, tests green, workers deployed
-
-- Scaffolded workers/ directory (7 Workers + shared lib)
-- Created wrangler.jsonc for all 7 Workers
-- Implemented AI03 LLM Gateway (src/index.ts, 90 lines)
-- 14/14 tests passing
-- Deployed: https://ai-gateway.yomi-alarape.workers.dev
-- Verified live: llama-3.2-3b returns valid responses
+## Cleaned Up
+- [x] workers/pdf-extractor/ — removed (replaced by unpdf in ai-indexing)
+- [x] Issues/platform/ — removed (LMS is external, API via api.json)
