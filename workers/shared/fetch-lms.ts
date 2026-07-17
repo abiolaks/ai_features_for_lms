@@ -9,7 +9,9 @@ interface FetchLmsOptions {
 }
 
 /**
- * Fetch from the LMS REST API with internal key auth.
+ * Fetch from the LMS REST API.
+ * Supports both X-API-Key (internal service) and Bearer token (JWT) auth.
+ * If LMS_INTERNAL_KEY starts with 'eyJ' (JWT), sends as Bearer.
  * All Workers use this instead of calling fetch() directly.
  */
 export async function fetchLms(
@@ -19,9 +21,16 @@ export async function fetchLms(
   const url = `${env.LMS_GATEWAY_URL}${options.path}`;
 
   const headers: Record<string, string> = {
-    'X-API-Key': env.LMS_INTERNAL_KEY,
     'Content-Type': 'application/json',
   };
+
+  // Support both Bearer token (JWT) and X-API-Key (internal service) auth
+  const key = env.LMS_INTERNAL_KEY || '';
+  if (key.startsWith('eyJ')) {
+    headers['Authorization'] = `Bearer ${key}`;
+  } else if (key) {
+    headers['X-API-Key'] = key;
+  }
 
   const response = await fetch(url, {
     method: options.method || 'GET',
