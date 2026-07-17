@@ -4,13 +4,13 @@
 
 ## Base URLs
 
-| Service | Development | Production |
-|---------|------------|------------|
-| Content Indexing | `https://ai-indexing.yomi-alarape.workers.dev` | `https://ai-indexing.lms.example.com` |
-| AI Tutor | `https://ai-tutor.yomi-alarape.workers.dev` | `https://ai-tutor.lms.example.com` |
-| Learning Paths | `https://ai-paths.yomi-alarape.workers.dev` | `https://ai-paths.lms.example.com` |
-| Post-Quiz Insights | `https://ai-insights.yomi-alarape.workers.dev` | `https://ai-insights.lms.example.com` |
-| LLM Gateway | Internal only — not called directly | Internal only |
+| Service | URL |
+|---------|-----|
+| Content Indexing | `https://ai-indexing.yomi-alarape.workers.dev` |
+| AI Tutor | `https://ai-tutor.yomi-alarape.workers.dev` |
+| Learning Paths | `https://ai-paths.yomi-alarape.workers.dev` |
+| Post-Quiz Insights | `https://ai-insights.yomi-alarape.workers.dev` |
+| LLM Gateway | Internal only — not called directly |
 
 ---
 
@@ -24,6 +24,8 @@ Content-Type: application/json
 ```
 
 ### Request
+
+- An example below
 
 ```json
 {
