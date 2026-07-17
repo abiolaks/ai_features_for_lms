@@ -229,3 +229,6 @@ _scripts/
 
 # Credentials / tokens
 **/.lms-token
+
+# Wrangler local dev variables (never deployed)
+.dev.vars
