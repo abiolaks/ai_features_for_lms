@@ -177,14 +177,14 @@ X-Webhook-Secret: lms-shared-secret-abc123
 
 | Field | Required | Description | Example |
 |-------|----------|-------------|---------|
-| `id` | ✅ | LMS lesson UUID | `019f5a2c-8d41-...` |
-| `title` | ✅ | Lesson title | `Prompt Engineering for SMEs` |
-| `contentType` | ✅ | `"video"`, `"pdf"`, `"ppt"`, `"document"` | `video` |
+| `id`  | LMS lesson UUID | `019f5a2c-8d41-...` |
+| `title`  | Lesson title | `Prompt Engineering for SMEs` |
+| `contentType` |  | `"video"`, `"pdf"`, `"ppt"`, `"document"` | `video` |
 | `cloudflareVideoId` | For videos | Stream video UID | `a1b2c3d4...` |
 | `streamStatus` | For videos | `"ready"` or `"processing"` | `ready` |
-| `course_id` | ✅ | Parent course UUID | `019f0513-90ba-...` |
-| `module_id` | ✅ | Parent module UUID | `019f0513-9405-...` |
-| `org_id` | ✅ | Organization UUID | `7591945d-10ba-...` |
+| `course_id` |  | Parent course UUID | `019f0513-90ba-...` |
+| `module_id` |  | Parent module UUID | `019f0513-9405-...` |
+| `org_id` |  | Organization UUID | `7591945d-10ba-...` |
 | `durationSeconds` | Optional | Video duration | `300` |
 
 ---

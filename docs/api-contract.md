@@ -9,6 +9,7 @@
 | Content Indexing | `https://ai-indexing.yomi-alarape.workers.dev` | `https://ai-indexing.lms.example.com` |
 | AI Tutor | `https://ai-tutor.yomi-alarape.workers.dev` | `https://ai-tutor.lms.example.com` |
 | Learning Paths | `https://ai-paths.yomi-alarape.workers.dev` | `https://ai-paths.lms.example.com` |
+| Post-Quiz Insights | `https://ai-insights.yomi-alarape.workers.dev` | `https://ai-insights.lms.example.com` |
 | LLM Gateway | Internal only — not called directly | Internal only |
 
 ---
@@ -239,8 +240,15 @@ Content-Type: application/json
 | `learner_id` | string | Yes | LMS learner ID |
 | `org_id` | string | Yes | Tenant identifier |
 
-> ⚠️ **Stub mode only:** Until the LMS APIs are live, you can pass data inline:
-> `profile`, `catalogue`, and `progress` fields. See `Issues/ai/AI06-learning-paths.md` for details.
+**That is the entire payload.** The worker fetches everything else itself from the LMS API (authenticated with the shared internal key):
+
+| Worker fetches | LMS endpoint called | Used for |
+|----------------|--------------------|----------|
+| Learner profile | `GET /api/v1/learner/profile` | Skills, goals, experience level, streak/points |
+| Course catalogue | `GET /api/v1/catalog?organization_id={org_id}` (falls back to `GET /api/v1/public/courses` if empty) | Courses available to sequence |
+| Progress | `GET /api/v1/progress/user?userId={learner_id}` | Completed / in-progress courses |
+
+> ℹ️ The request body also accepts optional `profile`, `catalogue`, and `progress` fields. These are **test-mode fallbacks only** — used when the LMS API is unreachable. Do **not** send them from the LMS; the worker's own fetch always takes priority.
 
 ### Response (200 — path generated)
 
@@ -310,6 +318,116 @@ Returned when the LLM is unavailable. Shows catalogue order without AI explanati
 { "error": "missing_field: org_id" }
 ```
 
+### Learner Profile Lifecycle — how the path stays personalized
+
+The worker is **completely stateless**. It stores no path, no profile snapshot — every call re-fetches the learner profile fresh from the LMS. Call the endpoint **every time the learner opens the learning path page**, regardless of profile state; the `ai_status` in the response tells the UI what to render:
+
+```
+Learner opens "My Learning Path"
+        │
+        ▼
+LMS → POST /paths/generate { learner_id, org_id }
+        │
+        ▼
+Worker → GET /v1/learner/profile   (reads whatever exists RIGHT NOW)
+        │
+        ├── profile has skills/goals ──→ ai_status: "generated"
+        │                                → show personalized ordered path
+        │
+        └── profile empty ─────────────→ ai_status: "insufficient_data"
+                                         → show catalogue + "set your goals" CTA
+```
+
+**First visit (no goals set):** the response is `insufficient_data` — show the catalogue plus a call-to-action ("Add your skills and goals to get a personalized path"). The goals/skills form is an **LMS UI feature**; the learner fills it, the LMS saves it to the profile, then re-calls `/paths/generate` — now it returns a personalized path.
+
+**Editing goals later:** allowed at any time. Because the worker re-fetches the profile on every call, a changed goal is reflected the very next time the learner opens the page. No cache invalidation or "regenerate" signal is needed on the AI side.
+
+> ⚠️ **LMS dependency — profile fields.** Personalization requires `skills`, `goals`, `experience_level`, and `interests` on the learner profile. These fields are **not yet in the current `api.json` spec** (see `docs/ai-lms-api-mapping.md`). Until the LMS (a) adds them to `GET /v1/learner/profile` and (b) ships a UI where learners can set and edit them (onboarding, learning-path empty state, profile settings), **every learner will receive `ai_status: "insufficient_data"`** and see the generic catalogue view. The AI side needs no changes once the fields appear.
+
+---
+
+## 5. Post-Quiz Insights
+
+Call this **after a quiz attempt is submitted and scored** — on the results screen. Returns a personalized, encouraging coaching insight plus review links for the topics the learner missed.
+
+```
+POST {base}/insights/generate
+Content-Type: application/json
+```
+
+### Request
+
+```json
+{
+  "attempt_id": "019f7030-af13-7393-991d-b70dbdf9dc47",
+  "learner_id": "364772bb-81db-481c-9a20-f0c88f863bce",
+  "org_id": "7591945d-10ba-4a39-adde-a495c2c9449b"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `attempt_id` | string | Yes | The **completed** attempt ID from `POST /learner/assessments/{id}/submit` |
+| `learner_id` | string | Yes | The attempt owner's user ID (used to fetch course progress) |
+| `org_id` | string | Yes | Tenant identifier |
+
+The worker fetches everything else itself from the LMS API: attempt responses (per-question correctness, timing, correct answers), assessment metadata (title, courseId, moduleId), learner progress, and the module's lesson list for review links.
+
+### Response (200 — generated)
+
+```json
+{
+  "insight_text": "Don't worry, you've got this! You're 65% through the course... Let's focus on reviewing AI roadmaps and organizational resilience.",
+  "missed_topics": [
+    {
+      "topic": "AI roadmap",
+      "review_link": "/courses/019f0513-.../lessons/019f121d-8f4b-..."
+    },
+    {
+      "topic": "Organizational resilience",
+      "review_link": "/courses/019f0513-.../lessons/019f121d-f762-..."
+    }
+  ],
+  "tone_check": "encouraging",
+  "ai_status": "generated"
+}
+```
+
+| Field | Notes |
+|-------|-------|
+| `insight_text` | 1 short paragraph. Always references real score + course progress. Never shaming — tone rules are enforced in the prompt. Render as plain text. |
+| `missed_topics[].topic` | Topic name derived from actually-missed questions (max ~3) |
+| `missed_topics[].review_link` | Relative LMS path `/courses/{courseId}/lessons/{lessonId}`. Lesson IDs are real (sourced from the module listing) — safe to link directly. **May be `""`** if no lesson matched; hide the link in that case. |
+| `tone_check` | Always `"encouraging"` |
+| `ai_status` | `"generated"` — real AI insight. `"degraded"` — LLM or LMS unavailable, placeholder text returned. |
+
+### Response (200 — degraded)
+
+```json
+{
+  "insight_text": "Insights unavailable right now — check back shortly.",
+  "missed_topics": [],
+  "tone_check": "encouraging",
+  "ai_status": "degraded"
+}
+```
+
+Never fails hard — degraded mode always returns 200 with a friendly placeholder. Show it or silently hide the insights panel; do **not** retry in a loop.
+
+### Response (400)
+
+```json
+{ "error": "missing_field: attempt_id" }
+{ "error": "missing_field: learner_id" }
+{ "error": "missing_field: org_id" }
+```
+
+### Frontend notes
+
+- **Latency is ~5–8 seconds** (LLM call). Fire the request as soon as the results screen mounts and show a skeleton/loading state — don't block the score display on it.
+- Perfect scores still get an insight (congratulatory, empty `missed_topics`).
+- The endpoint is stateless — safe to re-call for the same attempt (e.g., learner revisits the results page), but consider caching the response client-side or LMS-side per attempt to avoid duplicate LLM cost.
+
 ---
 
 ## Scope Expansion Flow
@@ -353,7 +471,10 @@ The recommended frontend behavior:
 - [ ] Lesson delete → call `POST /deindex`
 - [ ] Learner asks question → call `POST /tutor/ask` with `lesson_id`
 - [ ] Learner views dashboard → call `POST /paths/generate` with `learner_id` + `org_id`
+- [ ] Quiz submitted → call `POST /insights/generate` with `attempt_id` + `learner_id` + `org_id` (async, with loading state)
+- [ ] Hide review links when `review_link` is `""`
 - [ ] Handle `scope_expansion_suggested: true` → offer wider search to learner
-- [ ] Handle `ai_status: "insufficient_data"` → prompt learner to fill in profile
+- [ ] Handle `ai_status: "insufficient_data"` → prompt learner to fill in profile (goals/skills form is LMS-owned)
+- [ ] Add `skills`, `goals`, `experience_level`, `interests` to learner profile schema + edit UI (blocks path personalization)
 - [ ] Handle `ai_status: "degraded"` → show catalogue without AI explanations
 - [ ] Handle errors — 4xx is your fault, 5xx is retryable

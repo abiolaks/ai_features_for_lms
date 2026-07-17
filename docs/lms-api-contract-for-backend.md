@@ -32,8 +32,12 @@ LMS_WEBHOOK_SECRET=**********************
 │  Exposes these (validates X-API-Key):                           │
 │    GET  /api/v1/learner/profile                                  │
 │    GET  /api/v1/catalog                                          │
+│    GET  /api/v1/public/courses          (catalog fallback)       │
 │    GET  /api/v1/progress/user                                    │
 │    GET  /api/v1/lessons/{lesson}                                 │
+│    GET  /api/v1/learner/assessments/{id}         (AI08)          │
+│    GET  /api/v1/learner/assessments/attempts/{id} (AI08)         │
+│    GET  /api/v1/modules/{moduleId}/lessons        (AI08)         │
 │    GET  /api/v1/health                                           │
 └──────────────────────────────────────────────────────────────────┘
 
@@ -45,6 +49,7 @@ LMS_WEBHOOK_SECRET=**********************
 │    POST https://ai-tutor.yomi-alarape.workers.dev/tutor/clear   │
 │    wss://ai-tutor.yomi-alarape.workers.dev/tutor/ws?learner_id= │
 │    POST https://ai-paths.yomi-alarape.workers.dev/paths/generate│
+│    POST https://ai-insights.yomi-alarape.workers.dev/insights/generate│
 │                                                                  │
 │  What you pass from backend → frontend:                         │
 │    learner_id  — the LMS user ID (e.g., "user-42")              │
@@ -379,6 +384,93 @@ GET /api/v1/health
 ```
 
 AI Workers call this to check if the LMS is reachable before making data calls. Used by the graceful degradation system.
+
+---
+
+## Endpoint 6 — Assessment & Attempt Data (AI08 Post-Quiz Insights)
+
+> ✅ **Live and verified** against staging (2026-07-17). The `ai-insights` worker calls all three after a quiz is submitted.
+
+### 6a. Attempt Detail
+
+```
+GET /api/v1/learner/assessments/attempts/{attemptId}
+Header: X-API-Key: <LMS_INTERNAL_KEY>
+```
+
+**Response** (AI Workers extract from `.data`):
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "019f7030-...",
+    "userId": "364772bb-...",
+    "assessmentId": "019f121f-...",
+    "courseId": "019f0513-...",
+    "scorePercent": 20,
+    "totalQuestions": 5,
+    "correctAnswers": 1,
+    "timeTakenSeconds": 180,
+    "responses": [
+      {
+        "questionId": "019f121f-...",
+        "selectedOption": "A",
+        "isCorrect": false,
+        "timeSpentSeconds": 15,
+        "correctAnswer": "B",
+        "question": {
+          "id": "019f121f-...",
+          "questionText": "According to the unit, ...",
+          "options": { "A": "...", "B": "...", "C": "...", "D": "..." },
+          "correctAnswer": "B",
+          "explanation": "..."
+        }
+      }
+    ]
+  }
+}
+```
+
+> ⚠️ **Contract note:** `responses[]` must be an array of **objects** (as above), not JSON-encoded strings. `options` is a **dict keyed `A`–`D`**, not a list. The worker normalizes both shapes defensively, but this is the canonical form.
+
+**Fields AI Workers use:**
+
+| Field | Purpose |
+|-------|---------|
+| `scorePercent`, `correctAnswers`, `totalQuestions` | Score context in the insight |
+| `responses[].isCorrect` | Identify missed questions |
+| `responses[].timeSpentSeconds` | Flag questions with unusually long time (>60s) |
+| `responses[].question.questionText` | Topic extraction for review links |
+| `responses[].correctAnswer` | Shown to the LLM for coaching context |
+
+### 6b. Assessment Metadata
+
+```
+GET /api/v1/learner/assessments/{assessmentId}
+Header: X-API-Key: <LMS_INTERNAL_KEY>
+```
+
+**Fields AI Workers use:** `title` (quiz name in the insight), `courseId` (review link base), `moduleId` (bridge to the module lesson list).
+
+### 6c. Module Lessons
+
+```
+GET /api/v1/modules/{moduleId}/lessons
+Header: X-API-Key: <LMS_INTERNAL_KEY>
+```
+
+**Response** — note: `{ "data": [...] }` with **no `success` flag** on this wrapper:
+
+```json
+{
+  "data": [
+    { "id": "019f121d-...", "title": "Welcome and Objectives", "moduleId": "...", "courseId": "...", "sortOrder": 1 }
+  ]
+}
+```
+
+**Used for:** building validated review links (`/courses/{courseId}/lessons/{lessonId}`) by matching missed-question topics to lesson titles. The quiz's own lesson entry is excluded automatically.
 
 ---
 
@@ -902,19 +994,20 @@ When the learner asks a question, the tutor returns citations in this format:
 
 ## What If These Endpoints Don't Exist Yet?
 
-The AI Workers are currently in **stub mode** — they accept data inline in the request body instead of fetching from the LMS. Production-ready code is commented out with `LMS_INTEGRATION` markers.
+> ⚠️ **Historical section — the endpoints below now exist and are live.** The AI Workers fetch from them directly. Inline request-body data (`profile`, `catalogue`, `progress`) is retained only as a fallback when the LMS is unreachable; do not send it in production.
 
 ### Build Priority (what to implement first)
 
-| Priority | Endpoint | Unblocks |
-|----------|----------|----------|
-| 🔴 P0 | `GET /v1/learner/profile` | AI06, AI07, AI09 |
-| 🔴 P0 | `GET /v1/catalog` | AI06, AI07 |
-| 🔴 P0 | `GET /v1/progress/user` | AI06, AI07, AI08, AI09 |
-| 🟡 P1 | `GET /v1/lessons/{lesson}` | AI01, AI04, AI10 |
-| 🟡 P1 | `GET /v1/health` | AI12 |
-| 🟢 P2 | `GET /v1/learner/assessments` | AI08, AI11 |
+| Status | Endpoint | Unblocks |
+|--------|----------|----------|
+| ✅ Live | `GET /v1/learner/profile` | AI06, AI07, AI09 |
+| ✅ Live | `GET /v1/catalog` (+ `/v1/public/courses` fallback) | AI06, AI07 |
+| ✅ Live | `GET /v1/progress/user` | AI06, AI07, AI08, AI09 |
+| ✅ Live | `GET /v1/lessons/{lesson}` | AI01, AI04, AI10 |
+| ✅ Live | `GET /v1/health` | AI12 |
+| ✅ Live | `GET /v1/learner/assessments/{id}` + `/attempts/{id}` + `/v1/modules/{id}/lessons` | AI08 (see Endpoint 6) |
 | 🟢 P2 | `GET /v1/learner/activity-summary` | AI06, AI09 |
+| 🔴 **P0 gap** | `skills`, `goals`, `experience_level`, `interests` on learner profile + edit UI | AI06 personalization — without these every learner gets `insufficient_data` |
 
 
 
