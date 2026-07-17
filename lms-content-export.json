@@ -1,0 +1,164 @@
+{
+  "content": [
+    {
+      "id": "019f3eaa-2405-739b-9f37-3d891977dab2",
+      "title": "What Is AI and Why Does It Matter for Your Business",
+      "contentType": "video",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f0513-9405-73fd-a19b-bff6423d543f",
+      "cloudflareVideoId": "187d5bd887ca63e4c1429d9891053a7b"
+    },
+    {
+      "id": "019f3eac-7602-7040-913b-1e39f7b56454",
+      "title": "How AI Actually Works: Machine Learning, Deep Learning, and Generative AI",
+      "contentType": "video",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f0513-9405-73fd-a19b-bff6423d543f",
+      "cloudflareVideoId": "f73fe2ef28ed83162a4bf59b84a93001"
+    },
+    {
+      "id": "019f06d2-7607-7303-98f5-9d3976a59503",
+      "title": "How AI Drives Business Innovation in SMEs",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f06d0-c82a-70f8-a176-8bcacb1a421d",
+      "r2Key": "content/document/2026/06/27/b346bc61-994d-45a9-aef7-a71c95f54a2f/module-2-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f06d2-d178-73fa-a99a-bca5278c89d6",
+      "title": "Mapping and Transforming Business Processes with AI",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f06d0-c82a-70f8-a176-8bcacb1a421d",
+      "r2Key": "content/document/2026/06/27/dd52eb3c-891e-4d4e-9a61-fdd649250211/module-2-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019f06f4-7490-725a-ae8a-511e71e55d1a",
+      "title": "From Awareness to Adoption: Cultivating an AI Mindset",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f06d7-5a88-72b7-b8bf-f8cc721acac3",
+      "r2Key": "content/document/2026/06/27/d32fa744-8f9e-4e76-b12f-adc2d934fb03/module-3-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f06f5-9dc0-7094-84ef-47fb546ba1aa",
+      "title": "From Awareness to Adoption: Cultivating an AI Mindset",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f06d7-5a88-72b7-b8bf-f8cc721acac3",
+      "r2Key": "content/document/2026/06/27/853122ad-ad2e-47dd-b249-480385abe38f/module-3-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019f1200-b585-7054-bc13-10df92a76622",
+      "title": "Decision Intelligence and the Role of AI in Smarter Choices",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f11fd-e658-7279-8afa-e1c0fcdf1e0d",
+      "r2Key": "content/document/2026/06/29/5019f815-a79a-48bd-9e98-a5938172c864/module-4-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f1201-1bdc-732a-ad2c-0170c13c3c60",
+      "title": "Using Data and AI Tools to Support Business Decisions",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f11fd-e658-7279-8afa-e1c0fcdf1e0d",
+      "r2Key": "content/document/2026/06/29/96259909-5424-4b30-af09-674742a074d1/module-4-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019f1205-69ee-7315-9897-4a8a85d1dc22",
+      "title": "AI as a Digital Teammate: Augmenting Your People, Not Replacing Them",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f1204-42fa-70fa-a842-3ba31fff42ca",
+      "r2Key": "content/document/2026/06/29/eb789e20-252a-4f33-92fb-85cb61caacc9/module-5-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f1205-fd9b-726a-b29f-0e1f7d866a88",
+      "title": "Role-Based AI Assistants, Agentic Workflows, and Workforce Transformation",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f1204-42fa-70fa-a842-3ba31fff42ca",
+      "r2Key": "content/document/2026/06/29/232d8433-a73c-4341-b343-3819b99e494e/module-5-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019f120c-de61-72fa-98b7-1a1cdd96581e",
+      "title": "AI Risks, Bias, and Why Responsible Use Is a Business Requirement",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f120a-be7b-72c6-b58f-1aa0cfc2f09c",
+      "r2Key": "content/document/2026/06/29/36c26e7d-35c4-4332-8009-e6690f6f1fd5/module-6-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f120d-54af-710e-91a3-1e52d4040261",
+      "title": "Governance, Oversight, and Building Trustworthy AI Practices",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f120a-be7b-72c6-b58f-1aa0cfc2f09c",
+      "r2Key": "content/document/2026/07/03/fad9ce7f-e978-442a-9bb0-851e1c2dae83/module-6-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019f1219-2706-7088-913c-f818c6cf4106",
+      "title": "How to Know If AI Is Working: Metrics, KPIs, and Business Outcomes",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f1217-6617-719c-92f3-abf3109886ba",
+      "r2Key": "content/document/2026/06/29/9843b806-6313-4b5c-a4e8-aa161b115cdc/module-7-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f1219-e844-729c-b11b-149d22501d27",
+      "title": "Building an AI Performance Scorecard for Your SME",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f1217-6617-719c-92f3-abf3109886ba",
+      "r2Key": "content/document/2026/06/29/4b01d5f3-165b-4370-afe4-2367038e1e2d/module-7-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019f121d-8f4b-70cf-b002-b6b2fe6a1b3f",
+      "title": "Developing Your AI Strategy: From Experimentation to Roadmap",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f121c-4404-71d9-a649-b6d66074c89b",
+      "r2Key": "content/document/2026/06/29/b6306518-90e7-4681-bb1b-1b852906c88f/module-8-lesson-2-intro-video.pdf"
+    },
+    {
+      "id": "019f121d-f762-7334-b306-5ac851569b4e",
+      "title": "Organizational Resilience, Continuous Learning, and Long-Term AI Value",
+      "contentType": "pdf",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "module_id": "019f121c-4404-71d9-a649-b6d66074c89b",
+      "r2Key": "content/document/2026/06/29/0d27f8b6-e7c3-4515-8b84-7a6e487a9eb2/module-8-lesson-3-core-lecture.pdf"
+    },
+    {
+      "id": "019e5b0d-29bf-72b3-9582-28f8144193a2",
+      "title": "Introduction",
+      "contentType": "video",
+      "course_id": "019e216c-b0de-7357-901c-9d14621c5933",
+      "module_id": "019e5ae1-22e0-702a-859d-a79edbcd7457",
+      "cloudflareVideoId": "6c351eaf932cea87e23380909d9aeafb"
+    },
+    {
+      "id": "019e5ae3-4779-7314-82fd-333bcb6f67e3",
+      "title": "Foundations of AI for SMEs",
+      "contentType": "video",
+      "course_id": "019e216c-b0de-7357-901c-9d14621c5933",
+      "module_id": "019e5ae1-22e0-702a-859d-a79edbcd7457",
+      "cloudflareVideoId": "170c2e8feeecdcf0cfce2cd9be1fd411"
+    },
+    {
+      "id": "019ef751-9eae-723f-ad7b-cfc9e235c0fe",
+      "title": "Intro Video",
+      "contentType": "video",
+      "course_id": "019e216c-b0de-7357-901c-9d14621c5933",
+      "module_id": "019e5b08-c47a-705d-a386-15cd8c625a39",
+      "cloudflareVideoId": "69a5808380ae7cc1536b367b5f45a4aa"
+    },
+    {
+      "id": "019ef75f-5368-71d1-aa06-3be8aa0a8f78",
+      "title": "Intro Unit",
+      "contentType": "video",
+      "course_id": "019e216c-b0de-7357-901c-9d14621c5933",
+      "module_id": "019e5b19-532e-7197-b7f2-e4cb9b97f246",
+      "cloudflareVideoId": "486176a0bc2db2d95487443ae4d7fefd"
+    }
+  ]
+}

@@ -226,3 +226,6 @@ node_modules/
 worker-configuration.d.ts
 *.tsbuildinfo
 _scripts/
+
+# Credentials / tokens
+**/.lms-token
