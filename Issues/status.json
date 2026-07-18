@@ -8,26 +8,90 @@
     "embedding_model": "@cf/qwen/qwen3-embedding-0.6b"
   },
   "slices": {
-    "AI03": { "status": "complete", "title": "LLM Gateway", "deployed": "https://ai-gateway.yomi-alarape.workers.dev", "tests": "14/14", "github": 9 },
-    "AI01": { "status": "complete", "title": "Content Indexing (Stream captions + Vectorize)", "deployed": "https://ai-indexing.yomi-alarape.workers.dev", "tests": "17/17", "github": 8 },
-    "AI04": { "status": "complete", "title": "Tutor — Grounded Q&A", "deployed": "https://ai-tutor.yomi-alarape.workers.dev", "tests": "15/15", "github": 10 },
-    "AI08": { "status": "pending", "title": "Post-Quiz Insights", "pr_lines": 200, "github": 6 },
-    "AI06": { "status": "complete", "title": "Learning Paths", "deployed": "https://ai-paths.yomi-alarape.workers.dev", "tests": "20/20", "github": 4 },
-    "AI07": { "status": "pending", "title": "Recommendations", "pr_lines": 200, "github": 5 },
-    "AI13": { "status": "pending", "title": "Demo Dashboard", "pr_lines": 200, "github": 7 }
+    "AI03": {
+      "status": "complete",
+      "title": "LLM Gateway",
+      "deployed": "https://ai-gateway.yomi-alarape.workers.dev",
+      "tests": "14/14",
+      "github": 9
+    },
+    "AI01": {
+      "status": "complete",
+      "title": "Content Indexing (Stream captions + Vectorize)",
+      "deployed": "https://ai-indexing.yomi-alarape.workers.dev",
+      "tests": "17/17",
+      "github": 8
+    },
+    "AI04": {
+      "status": "complete",
+      "title": "Tutor \u2014 Grounded Q&A",
+      "deployed": "https://ai-tutor.yomi-alarape.workers.dev",
+      "tests": "15/15",
+      "github": 10
+    },
+    "AI08": {
+      "status": "pending",
+      "title": "Post-Quiz Insights",
+      "pr_lines": 200,
+      "github": 6
+    },
+    "AI06": {
+      "status": "complete",
+      "title": "Learning Paths",
+      "deployed": "https://ai-paths.yomi-alarape.workers.dev",
+      "tests": "20/20",
+      "github": 4
+    },
+    "AI07": {
+      "status": "complete",
+      "title": "Recommendations",
+      "deployed": "https://ai-recommendations.yomi-alarape.workers.dev",
+      "tests": "23/23",
+      "github": 5
+    },
+    "AI13": {
+      "status": "pending",
+      "title": "Demo Dashboard",
+      "pr_lines": 200,
+      "github": 7
+    }
   },
   "contingency": {
-    "AI07b": { "status": "pending", "title": "Fallback Recommendation Engine", "pr_lines": 350, "activation": "LMS recs endpoint returns insufficient data" }
+    "AI07b": {
+      "status": "built",
+      "title": "Fallback Recommendation Engine",
+      "notes": "Slimmed engine baked into AI07 worker \u2014 content similarity (Vectorize) + AI scoring signals. D1 collaborative deferred.",
+      "github": 5
+    }
   },
   "future_phase2": {
-    "F01": { "title": "CV Parsing", "github": 11 },
-    "F02": { "title": "Mentor Matching", "github": 12 },
-    "F03": { "title": "Skill-Gap Analysis", "github": 13 }
+    "F01": {
+      "title": "CV Parsing",
+      "github": 11
+    },
+    "F02": {
+      "title": "Mentor Matching",
+      "github": 12
+    },
+    "F03": {
+      "title": "Skill-Gap Analysis",
+      "github": 13
+    }
   },
   "future_phase3": {
-    "F04": { "title": "Org Plan Tuning", "github": 14 },
-    "F05": { "title": "Admin Analytics Narratives", "github": 15 }
+    "F04": {
+      "title": "Org Plan Tuning",
+      "github": 14
+    },
+    "F05": {
+      "title": "Admin Analytics Narratives",
+      "github": 15
+    }
   },
-  "deleted": ["AI02 — RAG Retrieval (Vectorize handles retrieval natively)"],
-  "cut": ["AI05 — LMS already has richer learner profiles"]
+  "deleted": [
+    "AI02 \u2014 RAG Retrieval (Vectorize handles retrieval natively)"
+  ],
+  "cut": [
+    "AI05 \u2014 LMS already has richer learner profiles"
+  ]
 }
