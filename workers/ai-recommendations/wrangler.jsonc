@@ -12,6 +12,15 @@
     }
   ],
 
+  "ai": { "binding": "AI" },
+
+  "vectorize": [
+    {
+      "binding": "VECTORIZE_INDEX",
+      "index_name": "lms-lessons"
+    }
+  ],
+
   "services": [
     {
       "binding": "AI_GATEWAY",
@@ -21,6 +30,12 @@
 
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    }
   }
 }
