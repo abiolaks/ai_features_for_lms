@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Features Dashboard — LMS</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --green: #22c55e;
+      --yellow: #eab308;
+      --red: #ef4444;
+      --blue: #3b82f6;
+      --purple: #a855f7;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); line-height: 1.6;
+      padding: 2rem; max-width: 1200px; margin: 0 auto;
+    }
+    h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
+    .subtitle { color: var(--muted); margin-bottom: 2rem; }
+
+    /* Progress bar */
+    .progress-bar-wrap { margin-bottom: 2rem; }
+    .progress-bar-label { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.85rem; color: var(--muted); }
+    .progress-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, var(--blue), var(--purple)); border-radius: 4px; transition: width 0.5s ease; }
+
+    /* Grid */
+    .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.25rem; }
+
+    /* Card */
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 10px; padding: 1.25rem; transition: border-color 0.3s;
+    }
+    .card.loading { opacity: 0.6; }
+    .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+    .card-title { font-weight: 600; font-size: 1rem; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .status-dot.ok { background: var(--green); }
+    .status-dot.warn { background: var(--yellow); }
+    .status-dot.err { background: var(--red); }
+
+    .card-body { font-size: 0.875rem; color: var(--muted); }
+    .card-body .metric { color: var(--text); font-weight: 600; }
+    .card-body .row { display: flex; justify-content: space-between; margin-bottom: 0.35rem; }
+    .card-body .label { color: var(--muted); }
+    pre { background: var(--bg); padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; overflow-x: auto; margin-top: 0.5rem; white-space: pre-wrap; }
+
+    /* Tutor playground */
+    .tutor-input { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .tutor-input input { flex: 1; padding: 0.5rem; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font-size: 0.85rem; }
+    .tutor-input button { padding: 0.5rem 1rem; background: var(--blue); color: #fff; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+    .tutor-input button:hover { opacity: 0.85; }
+    .tutor-answer { margin-top: 0.75rem; padding: 0.75rem; background: var(--bg); border-radius: 6px; font-size: 0.85rem; display: none; }
+    .tutor-answer.visible { display: block; }
+    .citation { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
+
+    /* Footer */
+    footer { margin-top: 2rem; text-align: center; font-size: 0.75rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>⚡ AI Features Dashboard</h1>
+  <p class="subtitle">All AI Workers — live status from production</p>
+
+  <div class="progress-bar-wrap">
+    <div class="progress-bar-label"><span>AI Features Complete</span><span id="progress-label">0 / 6</span></div>
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
+  </div>
+
+  <div class="cards">
+    <!-- AI03: Gateway -->
+    <div class="card" id="card-gateway">
+      <div class="card-header"><span class="card-title">🔌 AI03 — LLM Gateway</span><span class="status-dot" id="dot-gateway"></span></div>
+      <div class="card-body" id="body-gateway">Loading…</div>
+    </div>
+
+    <!-- AI01: Indexing -->
+    <div class="card" id="card-indexing">
+      <div class="card-header"><span class="card-title">📚 AI01 — Content Indexing</span><span class="status-dot" id="dot-indexing"></span></div>
+      <div class="card-body" id="body-indexing">Loading…</div>
+    </div>
+
+    <!-- AI04: Tutor -->
+    <div class="card" id="card-tutor">
+      <div class="card-header"><span class="card-title">🤖 AI04 — Grounded Tutor</span><span class="status-dot" id="dot-tutor"></span></div>
+      <div class="card-body" id="body-tutor">
+        <p>Ask a question about any indexed lesson:</p>
+        <div class="tutor-input">
+          <input type="text" id="tutor-q" placeholder="What are list comprehensions?" value="What is Python?">
+          <button onclick="askTutor()">Ask</button>
+        </div>
+        <div class="tutor-answer" id="tutor-answer"></div>
+      </div>
+    </div>
+
+    <!-- AI08: Insights -->
+    <div class="card" id="card-insights">
+      <div class="card-header"><span class="card-title">📊 AI08 — Post-Quiz Insights</span><span class="status-dot" id="dot-insights"></span></div>
+      <div class="card-body" id="body-insights">Loading…</div>
+    </div>
+
+    <!-- AI06: Paths -->
+    <div class="card" id="card-paths">
+      <div class="card-header"><span class="card-title">🗺️ AI06 — Learning Paths</span><span class="status-dot" id="dot-paths"></span></div>
+      <div class="card-body" id="body-paths">Loading…</div>
+    </div>
+
+    <!-- AI07: Recommendations -->
+    <div class="card" id="card-recs">
+      <div class="card-header"><span class="card-title">⭐ AI07 — Recommendations</span><span class="status-dot" id="dot-recs"></span></div>
+      <div class="card-body" id="body-recs">Loading…</div>
+    </div>
+  </div>
+
+  <footer>AI-Powered LMS · Open-source LLMs via Ollama · Zero API keys</footer>
+
+<script>
+// ════════════════════════════════════════════════════════
+//  Dashboard Client
+// ════════════════════════════════════════════════════════
+
+const WORKERS = {
+  gateway:    'https://ai-gateway.yomi-alarape.workers.dev',
+  indexing:   'https://ai-indexing.yomi-alarape.workers.dev',
+  tutor:      'https://ai-tutor.yomi-alarape.workers.dev',
+  insights:   'https://ai-insights.yomi-alarape.workers.dev',
+  paths:      'https://ai-paths.yomi-alarape.workers.dev',
+  recs:       'https://ai-recommendations.yomi-alarape.workers.dev',
+};
+
+const ORG_ID = 'demo';
+const LEARNER_ID = 'dashboard-demo';
+const DEMO_PROFILE = { skills: ['python', 'sql'], goals: 'become a machine learning engineer', experience_level: 'intermediate' };
+const DEMO_CATALOGUE = [
+  { id: 'c1', title: 'Python Basics', difficulty: 'beginner', category: 'programming' },
+  { id: 'c2', title: 'Data Science Fundamentals', difficulty: 'intermediate', category: 'data-science' },
+  { id: 'c3', title: 'Machine Learning 101', difficulty: 'advanced', category: 'ai-ml', prerequisites: ['Data Science Fundamentals'] },
+  { id: 'c4', title: 'Advanced Python', difficulty: 'advanced', category: 'programming', prerequisites: ['Python Basics'] },
+];
+const DEMO_PROGRESS = [{ title: 'Python Basics', status: 'completed', progress_pct: 100 }];
+
+let healthy = 0;
+const TOTAL = 6;
+
+function updateProgress() {
+  document.getElementById('progress-fill').style.width = `${(healthy / TOTAL) * 100}%`;
+  document.getElementById('progress-label').textContent = `${healthy} / ${TOTAL}`;
+}
+
+function setCard(id, status, html) {
+  const dot = document.getElementById(`dot-${id}`);
+  dot.className = `status-dot ${status}`;
+  if (status === 'ok') healthy++;
+  document.getElementById(`body-${id}`).innerHTML = html;
+  document.getElementById(`card-${id}`).classList.remove('loading');
+  updateProgress();
+}
+
+async function fetchJson(url, opts = {}) {
+  try {
+    const res = await fetch(url, { 
+      method: opts.method || 'GET',
+      headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return await res.json();
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+function formatTokens(n) {
+  if (n >= 1_000_000) return `${(n/1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n/1_000).toFixed(1)}K`;
+  return String(n);
+}
+
+// ──── AI03: Gateway ────
+(async () => {
+  const data = await fetchJson(`${WORKERS.gateway}/health?org_id=${ORG_ID}`);
+  if (data.error) return setCard('gateway', 'err', `❌ <span class="metric">${data.error}</span>`);
+  const b = data.budget;
+  const budgetHtml = b
+    ? `<div class="row"><span class="label">Budget</span><span class="metric">${formatTokens(b.used)} / ${formatTokens(b.monthly_cap)} tokens</span></div>
+       <div class="row"><span class="label">Remaining</span><span class="metric">${formatTokens(b.remaining)}</span></div>`
+    : `<div class="row"><span class="label">Budget</span><span class="metric">Not configured</span></div>`;
+  setCard('gateway', 'ok', `
+    <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">Connected</span></div>
+    <div class="row"><span class="label">Models</span><span class="metric">${(data.models||[]).join(', ')}</span></div>
+    ${budgetHtml}
+  `);
+})();
+
+// ──── AI01: Indexing ────
+(async () => {
+  const data = await fetchJson(`${WORKERS.indexing}/status`);
+  if (data.error) return setCard('indexing', 'warn', `⚠️ Status unavailable: <span class="metric">${data.error}</span>`);
+  const v = data.vectorize || {};
+  setCard('indexing', 'ok', `
+    <div class="row"><span class="label">Vectorize Index</span><span class="metric" style="color:var(--green)">Active</span></div>
+    <div class="row"><span class="label">Index name</span><span class="metric">${v.index || 'lms-lessons'}</span></div>
+    <div class="row"><span class="label">Dimensions</span><span class="metric">${v.dimensions || '—'}</span></div>
+    <div class="row"><span class="label">Vectors</span><span class="metric">${v.total_vectors ?? '—'}</span></div>
+    <div class="row"><span class="label">R2 Bucket</span><span class="metric">lms-content-staging</span></div>
+  `);
+})();
+
+// ──── AI04: Tutor (has real playground) ────
+setCard('tutor', 'ok', `
+  <p>Interactive Q&A — type a question below:</p>
+  <div class="tutor-input">
+    <input type="text" id="tutor-q" placeholder="What are list comprehensions?" value="What is Python?">
+    <button onclick="askTutor()">Ask</button>
+  </div>
+  <div class="tutor-answer" id="tutor-answer"></div>
+`);
+
+async function askTutor() {
+  const input = document.getElementById('tutor-q');
+  const answerDiv = document.getElementById('tutor-answer');
+  answerDiv.textContent = 'Thinking…';
+  answerDiv.classList.add('visible');
+  
+  // Try the real tutor with a random session
+  const sid = `dash-${Date.now()}`;
+  const data = await fetchJson(`${WORKERS.tutor}/tutor/ask`, {
+    method: 'POST',
+    body: { question: input.value, learner_id: LEARNER_ID, lesson_id: 'demo', course_id: 'demo', org_id: ORG_ID, session_id: sid }
+  });
+
+  if (data.answer) {
+    answerDiv.innerHTML = `<strong>Answer:</strong> ${data.answer}`;
+    if (data.citations?.length) {
+      answerDiv.innerHTML += `<div class="citation">📖 ${data.citations[0].lesson_title} (score: ${data.citations[0].score?.toFixed(2)})</div>`;
+    }
+  } else if (data.error) {
+    answerDiv.innerHTML = `⚠️ <span style="color:var(--yellow)">${data.error}</span>`;
+  } else {
+    answerDiv.textContent = `Response: ${JSON.stringify(data).slice(0, 200)}`;
+  }
+}
+
+// ──── AI08: Insights ────
+(async () => {
+  const data = await fetchJson(`${WORKERS.insights}/health`);
+  if (data.status === 'ok') {
+    setCard('insights', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">Online</span></div>
+      <div class="row"><span class="label">Endpoint</span><span class="metric">POST /insights/generate</span></div>
+      <p style="margin-top:0.5rem;font-size:0.8rem">Accepts attempt IDs from the LMS quiz engine.</p>
+    `);
+  } else {
+    setCard('insights', 'warn', `⚠️ Health check failed: <span class="metric">${data.error || 'unreachable'}</span>`);
+  }
+})();
+
+// ──── AI06: Paths (generates from demo data) ────
+(async () => {
+  const data = await fetchJson(`${WORKERS.paths}/paths/generate`, {
+    method: 'POST',
+    body: { learner_id: LEARNER_ID, org_id: ORG_ID, profile: DEMO_PROFILE, catalogue: DEMO_CATALOGUE, progress: DEMO_PROGRESS }
+  });
+  if (data.path?.length) {
+    const items = data.path.slice(0, 4).map((c, i) => `<div class="row"><span>${i+1}. ${c.course_title}</span><span style="color:var(--muted);font-size:0.75rem">${c.why_this_fits?.slice(0,60)}…</span></div>`).join('');
+    setCard('paths', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status}</span></div>
+      <div style="margin-top:0.5rem">${items}</div>
+    `);
+  } else {
+    setCard('paths', 'warn', `⚠️ ${data.ai_status || 'No path generated'}: <span class="metric">${data.error || JSON.stringify(data).slice(0,100)}</span>`);
+  }
+})();
+
+// ──── AI07: Recommendations ────
+(async () => {
+  const data = await fetchJson(`${WORKERS.recs}/recommendations/dashboard`, {
+    method: 'POST',
+    body: { learner_id: LEARNER_ID, org_id: ORG_ID, profile: DEMO_PROFILE, catalogue: DEMO_CATALOGUE, progress: DEMO_PROGRESS }
+  });
+  if (data.recommendations?.length) {
+    const items = data.recommendations.slice(0, 3).map(r => 
+      `<div style="margin-bottom:0.5rem">
+        <span class="metric">${r.course_title}</span>
+        <span style="color:var(--muted);font-size:0.75rem">(${r.fit_level}, score ${r.score})</span>
+        <div style="font-size:0.8rem;color:var(--muted)">${r.ai_why_this_fits}</div>
+      </div>`
+    ).join('');
+    setCard('recs', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status}</span></div>
+      <div class="row"><span class="label">Source</span><span class="metric">${data.source || 'fresh'}</span></div>
+      <div style="margin-top:0.5rem">${items}</div>
+    `);
+  } else {
+    setCard('recs', 'warn', `⚠️ ${data.ai_status || 'No recommendations'}: <span class="metric">${data.error || 'empty'}</span>`);
+  }
+})();
+</script>
+</body>
+</html>

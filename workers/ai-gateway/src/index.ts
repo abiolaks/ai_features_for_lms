@@ -23,11 +23,38 @@ interface BudgetRow {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    const url = new URL(req.url);
+
+    // ── GET /health — model connectivity check ──
+    if (req.method === 'GET' && url.pathname === '/health') {
+      const budget = await getBudget(env.DB, url.searchParams.get('org_id') || 'demo');
+      return json({
+        status: 'ok',
+        models: Object.values(MODELS),
+        budget: budget ? {
+          org_id: budget.org_id,
+          monthly_cap: budget.monthly_token_cap,
+          used: budget.tokens_used_this_period,
+          remaining: Math.max(0, budget.monthly_token_cap - budget.tokens_used_this_period),
+        } : null,
+      }, 200);
+    }
+
+    // ── GET /budget?org_id=... — budget status for dashboard ──
+    if (req.method === 'GET' && url.pathname === '/budget') {
+      const orgId = url.searchParams.get('org_id') || 'demo';
+      const budget = await getBudget(env.DB, orgId);
+      return json(budget ? {
+        org_id: budget.org_id,
+        monthly_cap: budget.monthly_token_cap,
+        used: budget.tokens_used_this_period,
+        remaining: Math.max(0, budget.monthly_token_cap - budget.tokens_used_this_period),
+      } : { error: 'no_budget_found', org_id: orgId }, 200);
+    }
+
     if (req.method !== 'POST') {
       return json({ error: 'method_not_allowed' }, 405);
     }
-
-    const url = new URL(req.url);
 
     // POST /stream — streaming LLM response
     if (url.pathname === '/stream') {

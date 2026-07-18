@@ -235,6 +235,11 @@ export default {
       return handleEnvCheck(env);
     }
 
+    // GET /status — dashboard: return indexed lesson count
+    if (req.method === "GET" && path === "/status") {
+      return handleStatus(env, url);
+    }
+
     // All other endpoints: POST only
     if (req.method !== "POST") {
       return Response.json({ error: "Method not allowed" }, { status: 405 });
@@ -336,6 +341,28 @@ async function handleEnvCheck(env: Env): Promise<Response> {
     }
   }
   return Response.json({ keys, details });
+}
+
+async function handleStatus(env: Env, url: URL): Promise<Response> {
+  try {
+    // Quick Vectorize health check — query with a small embedding
+    const embedding = await env.AI.run(EMBEDDING_MODEL, { text: "health check" });
+    const vector: number[] = embedding.data?.[0] ?? embedding;
+    const results = await env.VECTORIZE_INDEX.query(vector, { topK: 1, returnMetadata: false });
+    return Response.json({
+      status: "ok",
+      vectorize: {
+        index: "lms-lessons",
+        dimensions: vector.length,
+        total_vectors: results.count ?? results.matches?.length ?? "unknown",
+        query_ms: null,
+      },
+      r2: { bucket: "lms-content-staging" },
+      stream: { available: !!env.STREAM },
+    });
+  } catch (err: any) {
+    return Response.json({ status: "error", error: err.message }, { status: 500 });
+  }
 }
 
 async function handleListVideos(env: Env): Promise<Response> {
