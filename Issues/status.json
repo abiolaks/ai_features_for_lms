@@ -93,5 +93,7 @@
   ],
   "cut": [
     "AI05 \u2014 LMS already has richer learner profiles"
-  ]
+  ],
+  "completed_slices": 5,
+  "pending_slices": 2
 }
