@@ -30,9 +30,10 @@
       "github": 10
     },
     "AI08": {
-      "status": "pending",
+      "status": "complete",
       "title": "Post-Quiz Insights",
-      "pr_lines": 200,
+      "deployed": "https://ai-insights.yomi-alarape.workers.dev",
+      "tests": "30/30",
       "github": 6
     },
     "AI06": {
@@ -94,6 +95,6 @@
   "cut": [
     "AI05 \u2014 LMS already has richer learner profiles"
   ],
-  "completed_slices": 5,
-  "pending_slices": 2
+  "completed_slices": 6,
+  "pending_slices": 1
 }
