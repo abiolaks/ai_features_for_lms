@@ -151,9 +151,10 @@ LMS Backend ──POST /index──▶ ai-indexing Worker
 ### Pattern B: API (LMS or frontend pulls data from AI Workers)
 
 ```
-LMS Frontend ──POST /paths/generate──▶ ai-paths Worker
-              ──POST /tutor/ask──────▶ ai-tutor Worker
-              ──POST /insights───────▶ ai-insights Worker
+LMS Frontend ──POST /paths/generate───────▶ ai-paths Worker
+              ──POST /tutor/ask───────────▶ ai-tutor Worker
+              ──POST /recommendations/────▶ ai-recommendations Worker
+              ──POST /insights────────────▶ ai-insights Worker
 ```
 
 - **Who calls:** The LMS frontend (browser) or demo dashboard
@@ -169,7 +170,7 @@ LMS Frontend ──POST /paths/generate──▶ ai-paths Worker
 | `ai-paths` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
 | `ai-tutor` | LMS Frontend | Pull | Per-learner Durable Object (session isolation) | LMS Gateway → internal route |
 | `ai-insights` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
-| `ai-recommendations` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
+| `ai-recommendations` | LMS Frontend | Pull | Open | LMS Gateway → internal route |
 | `ai-dashboard` | LMS Frontend | Pull | Open (stub mode) | LMS Gateway → internal route |
 | `ai-gateway` | Other AI Workers (internal) | Service binding | Not exposed publicly | Cloudflare Workers service bindings (private network) |
 
@@ -690,6 +691,237 @@ ws.onmessage = (event) => {
 | Production frontend | Backward compatibility |
 
 **HTTP and WebSocket share the same Durable Object** — conversation history persists across both. A question sent via HTTP will be remembered when the user reconnects via WebSocket.
+
+---
+
+## AI Recommendations API (for LMS Frontend)
+
+The LMS frontend calls these endpoints to render "Recommended for you" and "What's next?" widgets on the dashboard and course pages.
+
+### Architecture: Enhance + Fallback Engine
+
+```
+LMS Frontend                    ai-recommendations Worker
+─────────────                   ──────────────────────────
+POST /recommendations/dashboard  ┌────────────────────────┐
+  learner_id, org_id       ────▶ │ 1. KV cache check      │
+                                 │ 2. Fetch LMS recs      │
+                                 │ 3a. LMS recs present?  │
+                                 │    → enhance with AI   │
+                                 │ 3b. LMS recs empty?    │
+                                 │    → engine: catalog   │
+                                 │      + AI scoring      │
+                                 │ 4. Cache (24h TTL)    │
+                                 └────────────────────────┘
+```
+
+**Key behaviors:**
+- Two endpoints: `/recommendations/dashboard` and `/recommendations/next`
+- LMS returns recommendations → worker enhances with AI-generated "why this fits"
+- LMS returns empty (cold start) → worker generates from catalogue + AI scoring
+- KV cache with 24h TTL, scoped per `{org, learner}`. Bypass with `?refresh=true`
+- Both GET (query params) and POST (JSON body) supported
+- POST body supports stub data (`profile`, `catalogue`, `progress`, `lms_recommendations`) for demo/testing
+
+---
+
+### POST /recommendations/dashboard
+
+```
+POST https://ai-recommendations.yomi-alarape.workers.dev/recommendations/dashboard
+Content-Type: application/json
+```
+
+**Request:**
+
+```json
+{
+  "learner_id": "user-42",
+  "org_id": "org-wragby",
+  "refresh": false
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `learner_id` | `string` | ✅ | Used for KV cache key and progress lookup |
+| `org_id` | `string` | ✅ | Org isolation, catalogue scoping |
+| `refresh` | `boolean` | ❌ | Bypass KV cache. Default `false` |
+| `profile` | `object` | ❌ | Stub mode: learner profile (skills, goals, experience_level) |
+| `catalogue` | `array` | ❌ | Stub mode: course list with title, difficulty, category, prerequisites |
+| `progress` | `array` | ❌ | Stub mode: enrollment list with title, status (completed/in_progress), progress_pct |
+| `lms_recommendations` | `array` | ❌ | Stub mode: LMS baseline recs to enhance |
+
+**GET alternative (query params):**
+
+```
+GET /recommendations/dashboard?learner_id=user-42&org_id=org-wragby&refresh=false
+```
+
+**Response — enhanced (200, LMS recs present with AI explanations):**
+
+```json
+{
+  "recommendations": [
+    {
+      "course_title": "Python Basics",
+      "lms_reason": "Popular in your org",
+      "ai_why_this_fits": "Matches your Python skill and ML engineering goal.",
+      "score": 94,
+      "fit_level": "strong",
+      "signals": {
+        "content_similarity": 0.9,
+        "ai_score": 92
+      }
+    }
+  ],
+  "ai_status": "enhanced",
+  "generated_at": "2026-07-18T00:00:00Z",
+  "source": "fresh"
+}
+```
+
+**Response — generated (200, LMS recs empty, engine generated from catalogue):**
+
+```json
+{
+  "recommendations": [
+    {
+      "course_title": "Data Science Fundamentals",
+      "lms_reason": "",
+      "ai_why_this_fits": "Bridges your Python skills into data science — natural next step.",
+      "score": 85,
+      "fit_level": "strong",
+      "signals": {
+        "content_similarity": 0.72,
+        "ai_score": 85
+      }
+    }
+  ],
+  "ai_status": "generated",
+  "generated_at": "2026-07-18T00:00:00Z",
+  "source": "fresh"
+}
+```
+
+**Response — cache hit (200):**
+
+```json
+{
+  "recommendations": [...],
+  "ai_status": "generated",
+  "generated_at": "2026-07-18T00:00:00Z",
+  "source": "cache"
+}
+```
+
+**Response — degraded (200, AI03 Gateway down):**
+
+```json
+{
+  "recommendations": [
+    {
+      "course_title": "Python Basics",
+      "lms_reason": "Popular in your org",
+      "ai_why_this_fits": "",
+      "score": 0,
+      "fit_level": "weak",
+      "signals": { "content_similarity": 0, "ai_score": 0 }
+    }
+  ],
+  "ai_status": "degraded",
+  "generated_at": "2026-07-18T00:00:00Z",
+  "source": "fresh"
+}
+```
+
+**Response — unavailable (200, no catalogue data):**
+
+```json
+{
+  "recommendations": [],
+  "ai_status": "unavailable",
+  "generated_at": "2026-07-18T00:00:00Z"
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `recommendations` | `array` | Up to 5 ranked recommendations |
+| `recommendations[].course_title` | `string` | LMS course title |
+| `recommendations[].lms_reason` | `string` | Baseline reason from LMS (empty if engine-generated) |
+| `recommendations[].ai_why_this_fits` | `string` | AI-generated one-sentence explanation (empty if degraded) |
+| `recommendations[].score` | `number` | 0-100 blended score |
+| `recommendations[].fit_level` | `string` | `"strong"` (>80), `"moderate"` (50-80), `"weak"` (<50) |
+| `recommendations[].signals` | `object` | Signal breakdown: `content_similarity` (0-1), `ai_score` (0-100) |
+| `ai_status` | `string` | `"enhanced"`, `"generated"`, `"degraded"`, or `"unavailable"` |
+| `source` | `string` | `"fresh"` or `"cache"` — indicates KV cache hit |
+
+---
+
+### POST /recommendations/next
+
+Returns recommended next courses after the learner completes a specific course. Biased toward progression — prerequisite chains, difficulty+1, collaborative patterns.
+
+```
+POST https://ai-recommendations.yomi-alarape.workers.dev/recommendations/next
+Content-Type: application/json
+```
+
+**Request:**
+
+```json
+{
+  "learner_id": "user-42",
+  "org_id": "org-wragby",
+  "course_id": "course-python-basics"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `learner_id` | `string` | ✅ | KV cache key, progress lookup |
+| `org_id` | `string` | ✅ | Org isolation |
+| `course_id` | `string` | ✅ | The completed course — used for prereq boost and context |
+
+**GET alternative:**
+
+```
+GET /recommendations/next?learner_id=user-42&org_id=org-wragby&course_id=course-python-basics
+```
+
+**Response (200):**
+
+```json
+{
+  "next_courses": [
+    {
+      "course_title": "Advanced Python",
+      "why_this_fits": "Builds directly on Python Basics — natural next step for your skill level.",
+      "score": 85,
+      "fit_level": "strong"
+    }
+  ],
+  "ai_status": "generated",
+  "generated_at": "2026-07-18T00:00:00Z"
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `next_courses` | `array` | Up to 3 ranked next courses |
+| `next_courses[].course_title` | `string` | LMS course title |
+| `next_courses[].why_this_fits` | `string` | AI-generated reason (progression-context) |
+| `next_courses[].score` | `number` | 0-100 blended score (includes +15 prereq boost) |
+| `next_courses[].fit_level` | `string` | `"strong"`, `"moderate"`, or `"weak"` |
+
+**Prerequisite boost:** Courses that list the completed `course_id` as a prerequisite receive +15 points. This ensures progression chains are respected.
+
+**Response — validation error (400):**
+
+```json
+{ "error": "missing_field: course_id" }
+```
 
 ---
 
