@@ -940,3 +940,48 @@ Dashboard verification: Workers & Pages → ai-indexing (invocations), AI → AI
 **Decision:** Upload metadata-only content (`"Title. type. Duration: Xs."`) as fallback instead of failing. The lesson remains findable by title — the Tutor returns degraded results rather than "not found."
 
 **Trade-offs:** Gain: graceful degradation, no broken lessons. Lose: search precision is lower without full transcript.
+
+---
+
+## 2026-07-17 — Session: AI08 Pre-Implementation Assessment & Project Status
+
+### Project Status Snapshot
+
+**Deployed & Verified (4/7 workers):**
+
+| Worker | Lines | Tests | URL |
+|--------|------:|------:|-----|
+| AI03 LLM Gateway | 267 | 14 | `ai-gateway.yomi-alarape.workers.dev` |
+| AI01 Content Indexing | 830 | 16 | `ai-indexing.yomi-alarape.workers.dev` |
+| AI04 Grounded Tutor | 177 | 15 | `ai-tutor.yomi-alarape.workers.dev` |
+| AI06 Learning Paths | 536 | 40 | `ai-paths.yomi-alarape.workers.dev` |
+
+**Infrastructure provisioned:**
+- D1 `lms-platform` — `org_budgets` table (org-test: 100k tokens, 2.8k used)
+- KV `LMS_CACHE` — provisioned
+- Queue `indexing-jobs` — provisioned
+- Vectorize `lms-lessons` — 1024-dim cosine, 14/16 videos indexed
+- R2 `lms-content-staging` — PDF/PPT staging
+
+**Empty stubs (wrangler.jsonc only):**
+- AI08 Post-Quiz Insights
+- AI07 Recommendations
+- AI13 Demo Dashboard
+
+### AI08 Pre-Implementation Findings
+
+**LMS endpoints exist (verified in api.json):**
+- `GET /v1/learner/assessments/{id}` — assessment metadata (title, courseId, passingScore)
+- `GET /v1/learner/assessments/attempts/{attemptId}` — score, totalQuestions, correctAnswers, timeTakenSeconds, responses[]
+- `GET /v1/progress/user?userId=` — enrollment progress
+- `GET /v1/lessons/{lesson}` — lesson detail for review links
+
+**Decision: accept `attempt_id` instead of `assessment_id`** — the submit flow returns `attemptId`, so the caller already has it. Avoids an extra API call to list attempts.
+
+**Key gap: per-question timing** — the attempt response has `responses` as array of strings (likely JSON-encoded objects). Need to verify they contain `timeSpentSeconds` per question. If not, skip that part of the prompt.
+
+**Pattern to follow:** `workers/ai-paths/` — LMS fetch → build prompt → call AI03 via service binding → parse response → span-based observability.
+
+### Cleared
+- `workers/pdf-extractor/` — deleted. PDF extraction handled inside ai-indexing via `unpdf`.
+- `Issues/platform/` — deleted. LMS is external, all interactions via `api.json`.
