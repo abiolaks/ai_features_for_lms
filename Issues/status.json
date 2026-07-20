@@ -56,24 +56,6 @@
       "pr_lines": 200,
       "github": 7
     },
-    "F01": {
-      "title": "CV Parsing",
-      "github": 11,
-      "status": "pending",
-      "phase": 2
-    },
-    "F02": {
-      "title": "Mentor Matching",
-      "github": 12,
-      "status": "pending",
-      "phase": 2
-    },
-    "F03": {
-      "title": "Skill-Gap Analysis",
-      "github": 13,
-      "status": "pending",
-      "phase": 2
-    },
     "F06": {
       "status": "pending",
       "title": "Platform Assistant",
@@ -92,17 +74,35 @@
       "phase": 2,
       "github": null
     },
-    "F04": {
-      "status": "pending",
-      "title": "Org Plan Tuning",
-      "phase": 2,
-      "github": 14
-    },
     "F05": {
       "status": "pending",
       "title": "Admin Analytics Narratives",
       "phase": 2,
       "github": 15
+    },
+    "F03a": {
+      "title": "Skill-Gap Analysis",
+      "github": 13,
+      "status": "pending",
+      "phase": 2
+    },
+    "F03b": {
+      "status": "pending",
+      "title": "Session Prep Insights",
+      "phase": 2,
+      "github": null
+    },
+    "F04a": {
+      "status": "pending",
+      "title": "Bottleneck Detection",
+      "phase": 2,
+      "github": null
+    },
+    "F04b": {
+      "status": "pending",
+      "title": "Engagement Monitoring",
+      "phase": 2,
+      "github": null
     }
   },
   "contingency": {
@@ -121,6 +121,12 @@
       "phase": 3,
       "github": null,
       "notes": "Split: AI team (storage API) + LMS team (admin UI)"
+    },
+    "F02": {
+      "status": "deferred",
+      "title": "Mentor Matching",
+      "github": 12,
+      "notes": "Blocked on Mentor Directory data product"
     }
   },
   "deleted": [

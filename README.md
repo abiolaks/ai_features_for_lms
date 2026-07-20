@@ -20,23 +20,24 @@ Learner ──→ AI Tutor / Paths / Recs ──→ AI03 Gateway ──→ LLM (
 | **ai-recommendations** | Enhanced recs + fallback engine, 24h KV cache | `ai-recommendations.yomi-alarape.workers.dev` | 23/23 ✅ |
 | **ai-dashboard** | Static Pages site — 6 live worker cards | `ai-dashboard.pages.dev` | Built ⏳ |
 
-## Phase 2 — In Progress
+## Phase 2 — In Progress (8 deployable slices)
 
-| Issue | Title | GitHub |
+| Issue | Title | Worker |
 |-------|-------|--------|
-| F01 | CV Parsing | [#11](https://github.com/datazone-ai/ai_features_for_lms/issues/11) |
-| F02 | Mentor Matching | [#12](https://github.com/datazone-ai/ai_features_for_lms/issues/12) |
-| F03 | Skill-Gap Analysis | [#13](https://github.com/datazone-ai/ai_features_for_lms/issues/13) |
-| F04 | Org Plan Tuning | [#14](https://github.com/datazone-ai/ai_features_for_lms/issues/14) |
-| F05 | Admin Analytics Narratives | [#15](https://github.com/datazone-ai/ai_features_for_lms/issues/15) |
-| F06 | Platform Assistant | — |
-| F07 | Question Generation | — |
-| F08 | Quality Checks | — |
+| F03a | Skill-Gap Analysis | `POST /mentor/skill-gap` |
+| F03b | Session Prep Insights | `POST /mentor/session-prep` |
+| F04a | Bottleneck Detection | `GET /admin/bottlenecks` |
+| F04b | Engagement Monitoring | `GET /admin/engagement` |
+| F05 | Admin Analytics Narratives | `GET /admin/narrative` |
+| F06 | Platform Assistant | `POST /assistant/ask` |
+| F07 | Question Generation | `POST /questions/generate` |
+| F08 | Quality Checks | `POST /questions/validate` |
 
-## Phase 3 — Later
+## Phase 3 / Deferred
 
-| Issue | Title | Owner |
-|-------|-------|-------|
+| Issue | Title | Reason |
+|-------|-------|--------|
+| F02 | Mentor Matching | Blocked on Mentor Directory data product |
 | F09 | Assessment Approval Workflow | Split — AI (API) + LMS (UI) |
 
 ## Tech Stack

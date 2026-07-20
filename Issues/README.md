@@ -47,19 +47,19 @@ Issues/
 ├── status.json                  ← Build progress tracker (6/7 complete)
 ├── prd-ai-features-phase-1.md   ← PRD (delivered)
 ├── ai/                          ← Active slice issues
-│   ├── AI13-demo-dashboard.md   ← Phase 1 (last remaining)
-│   ├── F01-cv-parsing.md        ← Phase 2
-│   ├── F02-mentor-matching.md   ← Phase 2
-│   ├── F03-skill-gap-analysis.md ← Phase 2
-│   ├── F04-org-plan-tuning.md   ← Phase 2
+│   ├── AI13-demo-dashboard.md   ← Phase 1 (last pending)
+│   ├── F03a-skill-gap-analysis.md  ← Phase 2
+│   ├── F03b-session-prep-insights.md ← Phase 2
+│   ├── F04a-bottleneck-detection.md  ← Phase 2
+│   ├── F04b-engagement-monitoring.md ← Phase 2
 │   ├── F05-admin-analytics-narratives.md ← Phase 2
 │   ├── F06-platform-assistant.md ← Phase 2
 │   ├── F07-question-generation.md ← Phase 2
 │   ├── F08-quality-checks.md    ← Phase 2
 │   └── done/                    ← Completed slices
-│       ├── AI01, AI03, AI04, AI06, AI07, AI07b, AI08
-└── future/                      ← Phase 3
-    └── F09-assessment-approval-workflow.md
+└── future/                      ← Phase 3 / Deferred
+    ├── F02-mentor-matching.md   ← Blocked (no data source)
+    └── F09-assessment-approval-workflow.md ← Split (AI + LMS)
 ```
 
 ## Slice Status
@@ -79,11 +79,11 @@ Issues/
 
 | # | Slice | Title | Depends On |
 |---|-------|-------|------------|
-| 8 | F01 | CV Parsing | AI03, LMS |
-| 9 | F02 | Mentor Matching | AI03, LMS profile + catalog |
-| 10 | F03 | Skill-Gap Analysis | AI03, LMS analytics |
-| 11 | F04 | Org Plan Tuning | AI03, LMS |
-| 12 | F05 | Admin Analytics Narratives | AI03, LMS analytics |
+| 8 | F03a | Skill-Gap Analysis | LMS profile + catalog |
+| 9 | F03b | Session Prep Insights | LMS profile + progress + quizzes |
+| 10 | F04a | Bottleneck Detection | LMS progress (aggregate) + quizzes |
+| 11 | F04b | Engagement Monitoring | LMS progress (aggregate) |
+| 12 | F05 | Admin Analytics Narratives | LMS aggregate data, F04a/F04b context |
 | 13 | F06 | Platform Assistant | AI03, LMS catalog + lessons, Vectorize |
 | 14 | F07 | Question Generation | AI03 (quality tier), LMS lessons, Vectorize |
 | 15 | F08 | Quality Checks | F07, AI03 |

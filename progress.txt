@@ -12,17 +12,18 @@
 ## Pending (1/7 Phase 1)
 - [ ] AI13 Demo Dashboard — built, pending deploy (needs CLOUDFLARE_API_TOKEN with Pages write)
 
-## Phase 2 (8 features — starting today)
-- [ ] F01 CV Parsing
-- [ ] F02 Mentor Matching
-- [ ] F03 Skill-Gap Analysis
-- [ ] F04 Org Plan Tuning
+## Phase 2 (8 deployable slices)
+- [ ] F03a Skill-Gap Analysis
+- [ ] F03b Session Prep Insights
+- [ ] F04a Bottleneck Detection
+- [ ] F04b Engagement Monitoring
 - [ ] F05 Admin Analytics Narratives
 - [ ] F06 Platform Assistant
 - [ ] F07 Question Generation
 - [ ] F08 Quality Checks
 
-## Phase 3 (later)
+## Deferred / Phase 3
+- [ ] F02 Mentor Matching — blocked on Mentor Directory data product
 - [ ] F09 Assessment Approval Workflow — split: AI (API) + LMS (UI)
 
 ## Infrastructure
