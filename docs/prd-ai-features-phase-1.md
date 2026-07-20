@@ -1,9 +1,9 @@
 # PRD: AI Features for LMS — Phase 1 MVP
 
-**Status:** Ready for implementation  
+**Status:** Complete — Phase 1 delivered (6/7 AI workers deployed, 1 Pages dashboard).  
 **Date:** 2026-06-10  
 **Architecture:** Cloudflare Workers + Workers AI  
-**LMS Contract:** `api.json` (REST API on localhost:8000)
+**LMS Contract:** `lms-api-contract-for-backend.md` → staging LMS at `lms-staging-api-*.azurewebsites.net`
 
 ---
 
@@ -31,7 +31,7 @@ An AI layer of 7 Cloudflare Workers that read from the LMS API and generate what
 
 ```
 Learner Browser
-  ├── LMS Gateway (localhost:8000) — platform data
+  ├── LMS Gateway (Azure staging) — platform data
   └── AI Workers (*.workers.dev) — AI features
         │
         ├── AI Workers call LMS Gateway for data (X-API-Key: LMS_INTERNAL_KEY)
@@ -44,7 +44,7 @@ Learner Browser
 **Key decisions:**
 - LMS owns all data (courses, profiles, progress, quizzes). AI Workers **read only**.
 - AI03 is the only Worker that calls Workers AI. All others call AI03 via Service Binding.
-- Embeddings use Cloudflare Workers AI `bge-m3`. No local models.
+- Embeddings use Cloudflare Workers AI `bge-large-en-v1.5`. No local models.
 - Vector storage is Cloudflare Vectorize. No LanceDB.
 - AI data (budgets, caches, conversations) stored in D1/KV/DO.
 
@@ -76,7 +76,7 @@ Learner Browser
 |------|-------|--------|-------|
 | 1 | AI03 | LLM Gateway | ~300 |
 | 2 | AI01 | Content Indexing | ~350 |
-| 2 | AI02 | RAG Retrieval | ~150 |
+| 2 | AI01 | Content Indexing | ~830 |
 | 3 | AI04 | Tutor | ~300 |
 | 3 | AI08 | Post-Quiz Insights | ~200 |
 | 4 | AI06 | Learning Paths | ~300 |

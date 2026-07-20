@@ -12,7 +12,7 @@
 ✅ Test against real LMS      — actual api.json endpoints via tunnel
 ✅ Test against real CF infra  — Vectorize, D1, KV (wrangler dev)
 ⚠️ Mock Workers AI LLM           — recorded responses for deterministic tests
-⚠️ Mock bge-m3 embeddings      — known vectors for reproducible retrieval
+⚠️ Mock bge-large-en-v1.5 embeddings      — known vectors for reproducible retrieval
 ❌ Never mock LMS data          — defeats the purpose of integration
 ```
 
@@ -118,7 +118,7 @@ describe('AI03 LLM Gateway', () => {
 **How to test during dev:**
 ```bash
 # 1. Ensure LMS is running and reachable
-curl http://localhost:8000/api/v1/lessons/some-lesson-id
+curl https://lms-staging-api-gpeze7brdfc9akhj.southafricanorth-01.azurewebsites.net/api/v1/lessons/some-lesson-id
 # Expect: { success: true, data: { id: "...", title: "...", content: "..." } }
 
 # 2. Index a lesson
@@ -141,7 +141,7 @@ curl -X POST http://localhost:8787/deindex \
 
 ---
 
-### AI02 — RAG Retrieval
+### AI01 — Content Indexing (Vectorize retrieval)
 
 **What to test:**
 ```
@@ -193,7 +193,7 @@ curl -X POST http://localhost:8787/retrieve \
    - Follow-up with expand_scope: "module" → wider retrieval → answer returned
 
 4. No chunks at all
-   - AI02 returns empty → Tutor returns "not found" without calling AI03
+   - AI01 returns empty → Tutor returns "not found" without calling AI03
 ```
 
 **How to test during dev:**
@@ -239,7 +239,7 @@ curl -X POST http://localhost:8787/tutor/ask \
 **How to test during dev:**
 ```bash
 # 1. Ensure LMS has an assessment with results
-curl http://localhost:8000/api/v1/learner/assessments/some-assessment-id
+curl https://lms-staging-api-gpeze7brdfc9akhj.southafricanorth-01.azurewebsites.net/api/v1/learner/assessments/some-assessment-id
 # Expect assessment data with questions, answers, scores
 
 # 2. Generate insight
@@ -249,7 +249,7 @@ curl -X POST http://localhost:8787/insights/generate \
 # Expect: { insight_text: "You scored 75%...", missed_topics: [{ topic: "Decorators", review_link: "/courses/python-101/lessons/functions#advanced" }], tone_check: "encouraging" }
 
 # 3. Verify review links work
-curl http://localhost:8000/api/v1/lessons/functions
+curl https://lms-staging-api-gpeze7brdfc9akhj.southafricanorth-01.azurewebsites.net/api/v1/lessons/functions
 # Expect: 200 with sections matching the review link slugs
 ```
 
@@ -342,7 +342,7 @@ echo "   $INDEX_RESULT"
 
 # 2. Retrieve relevant chunks
 echo "2. Retrieving chunks..."
-RETRIEVE_RESULT=$(curl -s -X POST $AI02_URL/retrieve \
+RETRIEVE_RESULT=$(curl -s -X POST $AI01_URL/retrieve \
   -d '{"query":"How to define a function?","org_id":"org-1","scope":{"type":"lesson","id":"python-functions"}}')
 echo "   Found $(echo $RETRIEVE_RESULT | jq '.chunks | length') chunks"
 
@@ -440,7 +440,7 @@ describe('LMS API Contracts', () => {
 docker compose up -d
 
 # 2. Start tunnel (once per session)
-cloudflared tunnel --url http://localhost:8000
+# Staging LMS is live — no tunnel needed
 # → https://lms-dev-abc.trycloudflare.com
 # Copy this URL → set as LMS_GATEWAY_URL in wrangler.toml
 
@@ -497,7 +497,7 @@ For each slice PR, reviewer verifies:
 |-------|------------|-------|--------|-------|--------|-----|
 | AI03 | ~200 lines | ~60 lines | ~20 lines | ~280 | 300 | ✅ |
 | AI01 | ~240 lines | ~70 lines | ~20 lines | ~330 | 350 | ✅ |
-| AI02 | ~90 lines | ~40 lines | ~10 lines | ~140 | 150 | ✅ |
+| AI01 | ~90 lines | ~40 lines | ~10 lines | ~140 | 150 | ✅ |
 | AI04 | ~200 lines | ~60 lines | ~15 lines | ~275 | 300 | ✅ |
 | AI08 | ~130 lines | ~45 lines | ~10 lines | ~185 | 200 | ✅ |
 | AI06 | ~200 lines | ~60 lines | ~15 lines | ~275 | 300 | ✅ |

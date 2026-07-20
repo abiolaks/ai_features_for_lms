@@ -1,6 +1,7 @@
 # AI Services API Contract
 
 > For the LMS Backend Engineer — everything you need to integrate.
+> Also see `lms-api-contract-for-backend.md` for the full LMS-side contract.
 
 ## Base URLs
 
@@ -9,8 +10,10 @@
 | Content Indexing | `https://ai-indexing.yomi-alarape.workers.dev` |
 | AI Tutor | `https://ai-tutor.yomi-alarape.workers.dev` |
 | Learning Paths | `https://ai-paths.yomi-alarape.workers.dev` |
+| Recommendations | `https://ai-recommendations.yomi-alarape.workers.dev` |
 | Post-Quiz Insights | `https://ai-insights.yomi-alarape.workers.dev` |
 | LLM Gateway | Internal only — not called directly |
+| Demo Dashboard | `https://ai-dashboard.pages.dev` (Pages) |
 
 ---
 
@@ -344,7 +347,7 @@ Worker → GET /v1/learner/profile   (reads whatever exists RIGHT NOW)
 
 **Editing goals later:** allowed at any time. Because the worker re-fetches the profile on every call, a changed goal is reflected the very next time the learner opens the page. No cache invalidation or "regenerate" signal is needed on the AI side.
 
-> ⚠️ **LMS dependency — profile fields.** Personalization requires `skills`, `goals`, `experience_level`, and `interests` on the learner profile. These fields are **not yet in the current `api.json` spec** (see `docs/ai-lms-api-mapping.md`). Until the LMS (a) adds them to `GET /v1/learner/profile` and (b) ships a UI where learners can set and edit them (onboarding, learning-path empty state, profile settings), **every learner will receive `ai_status: "insufficient_data"`** and see the generic catalogue view. The AI side needs no changes once the fields appear.
+> ⚠️ **LMS dependency — profile fields.** Personalization quality depends on `skills`, `goals`, `experience_level`, and `interests` on the learner profile. These fields are present in the LMS contract but currently return empty for staging users. Until learners populate these fields (onboarding, profile settings), recommendations and paths fall back to catalogue-based scoring (`ai_status: "generated"`) rather than deeply personalized results (`ai_status: "enhanced"`). The AI workers handle this gracefully — no changes needed on the AI side once the fields are populated.
 
 ---
 

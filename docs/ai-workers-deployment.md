@@ -1,7 +1,7 @@
 # AI Workers — Deployment & Testing Log
 
 **Date:** 2026-07-10  
-**Account:** kingsleylawani@gmail.com (yomi-alarape)  
+**Account:** yomi-alarape (Yomi.alarape@gmail.com's Account)  
 **Account ID:** `6a42fe51d00d9ba921124c3f6e7ed092`
 
 ---
