@@ -9,6 +9,7 @@
 
 import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
+import { startSpan, setAttr, endSpan } from "../../shared/observability";
 
 export interface Env {
   AI_GATEWAY: Fetcher;
@@ -58,40 +59,6 @@ interface PathCourse {
 interface PathResponse {
   path: PathCourse[];
   ai_status: "generated" | "insufficient_data" | "degraded";
-}
-
-// ════════════════════════════════════════════════════════
-//  Span Helpers (Cloudflare Workers Observability)
-// ════════════════════════════════════════════════════════
-//
-// Workers built-in observability captures top-level request spans.
-// We add structured console.log for custom sub-spans, surfaced
-// via wrangler tail / Workers Logs / Analytics Engine.
-// ============================================================
-
-interface SpanContext {
-  name: string;
-  attrs: Record<string, unknown>;
-  startMs: number;
-}
-
-function startSpan(name: string): SpanContext {
-  return { name, attrs: {}, startMs: Date.now() };
-}
-
-function setAttr(ctx: SpanContext, key: string, value: unknown): void {
-  ctx.attrs[key] = value;
-}
-
-function endSpan(ctx: SpanContext): void {
-  const duration = Date.now() - ctx.startMs;
-  console.log(
-    JSON.stringify({
-      span: ctx.name,
-      duration_ms: duration,
-      ...ctx.attrs,
-    })
-  );
 }
 
 // ════════════════════════════════════════════════════════
