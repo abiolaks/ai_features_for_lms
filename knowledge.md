@@ -636,7 +636,7 @@ Gaps in current api.json: no `prerequisites` field on CourseResource, no `goals`
 - `workers/ai-paths/src/index.ts` (spans added, prereq violation tracking)
 - `workers/ai-paths/test/index.test.ts` (6 new span tests)
 - `docs/lms-api-contract-for-backend.md` (new — full contract for LMS team)
-- `docs/api-contract.md` (updated — added AI06 endpoint docs)
+- `docs/lms-api-contract-for-backend.md` (updated — added AI06 endpoint docs)
 
 ---
 

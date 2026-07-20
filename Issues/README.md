@@ -102,4 +102,3 @@ Issues/
 | `docs/ai-mvp-scope.md` | MVP scope decisions, what was cut |
 | `docs/ai-testing-guide.md` | Testing patterns |
 | `docs/ai-workers-deployment.md` | Deployment log |
-| `docs/api-contract.md` | AI services contract (supplement) |

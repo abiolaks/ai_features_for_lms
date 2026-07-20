@@ -71,7 +71,7 @@ Learner asks question → ai-tutor
 │   ├── ai/done/          # Completed issues
 │   └── ai/archive/       # Archived / superseded
 ├── docs/
-│   ├── api-contract.md   # Backend engineer handoff
+│   ├── lms-api-contract-for-backend.md   # THE authoritative API contract
 │   └── ...
 ├── knowledge.md          # Session knowledge base
 ├── blockers-and-resolutions.md  # All blockers + fixes
@@ -81,7 +81,7 @@ Learner asks question → ai-tutor
 
 ## API Contract
 
-See [docs/api-contract.md](docs/api-contract.md) for the complete backend engineer handoff — request/response shapes, error codes, and scope expansion flow.
+See [docs/lms-api-contract-for-backend.md](docs/lms-api-contract-for-backend.md) for the complete backend engineer handoff — request/response shapes, error codes, and scope expansion flow.
 
 Quick reference:
 

@@ -66,7 +66,7 @@ const matches = results.matches.filter(m => m.metadata?.lesson_id === lessonId);
 - Tests mock at the binding boundary — we test Worker logic, not Cloudflare's inference
 
 ### API Contract
-- Every Worker's endpoints are documented in `docs/api-contract.md`
+- Every Worker's endpoints are documented in `docs/lms-api-contract-for-backend.md`
 - Request/response shapes, error codes, and integration flows are maintained there
 - The backend engineer only needs that one document to integrate
 

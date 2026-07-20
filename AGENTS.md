@@ -95,7 +95,7 @@ Full context and implementation plan is in `Issues/`:
 | `docs/ai-mvp-scope.md` | MVP scope decisions, what was cut |
 | `docs/ai-testing-guide.md` | Testing patterns for each worker |
 | `docs/ai-workers-deployment.md` | Deployment log |
-| `docs/api-contract.md` | AI services API contract (supplement to lms-api-contract) |
+| `docs/lms-api-contract-for-backend.md` | AI services API contract + LMS endpoints |
 | `Issues/status.json` | Build progress (6/7 complete) |
 
 ### LMS Endpoints Workers Call
