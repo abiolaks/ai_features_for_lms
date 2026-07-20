@@ -4,20 +4,10 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
 } from 'cloudflare:test';
+import { createMockGateway, spyOnSpans } from '../../shared/test-utils';
 import worker from '../src/index';
 
-// ──── Mocks ────
-
-function mockAiGateway(response: object, ok = true) {
-  return {
-    fetch: vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(response), {
-        status: ok ? 200 : 502,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    ),
-  };
-}
+// ──── Fixtures ────
 
 const DEFAULT_LLM_RESPONSE = {
   response: JSON.stringify({
@@ -32,21 +22,19 @@ const DEFAULT_LLM_RESPONSE = {
   throttle_warning: false,
 };
 
-// ──── Span tracking — captures structured console.log ────
+// ──── Span tracking ────
 
 let spanLogs: string[] = [];
-
-function mockConsoleLog(...args: unknown[]) {
-  spanLogs.push(String(args[0]));
-}
+let spans: ReturnType<typeof spyOnSpans>['spans'];
 
 beforeAll(() => {
-  (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+  (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
 });
 
 beforeEach(() => {
-  spanLogs = [];
-  vi.spyOn(console, 'log').mockImplementation(mockConsoleLog);
+  const s = spyOnSpans();
+  spanLogs = s.logs;
+  spans = s.spans;
 });
 
 // ──── Helpers ────
@@ -161,7 +149,7 @@ describe('Insufficient data', () => {
 describe('Path generation', () => {
   it('generates path from profile + catalogue + progress', async () => {
     // Use a clean mock with courses that work with the test data
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: JSON.stringify({
         courses: [
           { course_title: "Data Science Fundamentals", order: 1, why_this_fits: "Bridges skills to ML." },
@@ -189,7 +177,7 @@ describe('Path generation', () => {
   });
 
   it('excludes completed courses from path', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: JSON.stringify({
         courses: [
           { course_title: "Python Basics", order: 1, why_this_fits: "Foundation." },
@@ -222,7 +210,7 @@ describe('Path generation', () => {
 
   it('validates prerequisite ordering', async () => {
     // LLM returns courses in wrong order
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: JSON.stringify({
         courses: [
           { course_title: "Machine Learning 101", order: 1, why_this_fits: "..." },
@@ -258,7 +246,7 @@ describe('Path generation', () => {
 
 describe('Degraded mode', () => {
   it('returns catalogue without AI when gateway fails', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({}, false);
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
 
     const res = await generate({
       learner_id: 'l1',
@@ -275,7 +263,7 @@ describe('Degraded mode', () => {
   });
 
   it('returns degraded when LLM returns non-JSON', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: "Here's a nice path for you... no JSON here!",
       model_used: "llama",
       provider: "cloudflare",
@@ -306,7 +294,7 @@ describe('Degraded mode', () => {
 
 describe('Prompt construction', () => {
   it('includes profile + catalogue + progress in prompt', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -331,7 +319,7 @@ describe('Prompt construction', () => {
   });
 
   it('handles minimal profile gracefully', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -354,7 +342,7 @@ describe('Prompt construction', () => {
 
 describe('Observability spans', () => {
   it('emits data.fetch span with catalogue + progress counts', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
 
     await generate({
       learner_id: 'l1',
@@ -376,7 +364,7 @@ describe('Observability spans', () => {
   });
 
   it('emits path.generate span with course count and why_this_fits count', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: JSON.stringify({
         courses: [
           { course_title: "Data Science Fundamentals", order: 1, why_this_fits: "Bridges skills to ML." },
@@ -408,7 +396,7 @@ describe('Observability spans', () => {
 
   it('emits path.generate span with prereq_violations when LLM orders wrong', async () => {
     // LLM returns ML 101 (needs DS Fundamentals) before DS Fundamentals
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: JSON.stringify({
         courses: [
           { course_title: "Machine Learning 101", order: 1, why_this_fits: "..." },
@@ -434,7 +422,7 @@ describe('Observability spans', () => {
   });
 
   it('emits degraded path.generate span when gateway fails', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({}, false);
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
 
     await generate({
       learner_id: 'l1',
@@ -454,7 +442,7 @@ describe('Observability spans', () => {
   });
 
   it('emits ai_gateway.generate sub-span', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
 
     await generate({
       learner_id: 'l1',
@@ -473,7 +461,7 @@ describe('Observability spans', () => {
   });
 
   it('emits data.fetch span with insufficient_data flags when no profile', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
 
     await generate({
       learner_id: 'l1',

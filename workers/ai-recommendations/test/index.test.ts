@@ -1,36 +1,16 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import { createMockGateway, createLlmResponse, spyOnSpans } from '../../shared/test-utils';
 import worker from '../src/index';
 
-// ──── Mocks ────
+// ──── Response fixtures ────
 
-function mockAiGateway(response: object | null, ok = true) {
-  return {
-    fetch: vi.fn().mockResolvedValue(
-      new Response(JSON.stringify(response), {
-        status: ok ? 200 : 502,
-        headers: { 'Content-Type': 'application/json' },
-      })
-    ),
-  };
-}
-
-function llmResponse(payload: unknown) {
-  return {
-    response: JSON.stringify(payload),
-    model_used: '@cf/meta/llama-3.2-3b-instruct',
-    provider: 'cloudflare',
-    tokens_used: 100,
-    throttle_warning: false,
-  };
-}
-
-const ENHANCE_RESPONSE = llmResponse([
+const ENHANCE_RESPONSE = createLlmResponse([
   { course_title: 'Python Basics', why_this_fits: 'Matches your Python skill and ML goal.' },
   { course_title: 'Data Science Fundamentals', why_this_fits: 'Bridges your SQL skills into data science.' },
 ]);
 
-const SCORING_RESPONSE = llmResponse([
+const SCORING_RESPONSE = createLlmResponse([
   { course_title: 'Machine Learning 101', score: 92, reason: 'Directly advances your ML engineer goal.' },
   { course_title: 'Advanced Python', score: 75, reason: 'Deepens your existing Python skills.' },
   { course_title: 'Deep Learning', score: 40, reason: 'Too advanced before ML fundamentals.' },
@@ -38,26 +18,20 @@ const SCORING_RESPONSE = llmResponse([
 
 // ──── Span tracking ────
 
-let spanLogs: string[] = [];
+let logs: string[] = [];
+let spans: ReturnType<typeof spyOnSpans>['spans'];
 
 beforeEach(async () => {
-  spanLogs = [];
-  vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
-    spanLogs.push(String(args[0]));
-  });
-  (env as any).AI_GATEWAY = mockAiGateway(SCORING_RESPONSE);
+  const s = spyOnSpans();
+  logs = s.logs;
+  spans = s.spans;
+  (env as any).AI_GATEWAY = createMockGateway(SCORING_RESPONSE);
   delete (env as any).AI;
   delete (env as any).VECTORIZE_INDEX;
   // Clear KV between tests
   const keys = await (env as any).LMS_CACHE.list();
   for (const k of keys.keys) await (env as any).LMS_CACHE.delete(k.name);
 });
-
-function spans(name: string): any[] {
-  return spanLogs
-    .map((l) => { try { return JSON.parse(l); } catch { return null; } })
-    .filter((s) => s && s.span === name);
-}
 
 // ──── Helpers ────
 
@@ -136,7 +110,7 @@ describe('Validation', () => {
 
 describe('Enhance path (LMS recs present)', () => {
   it('merges LMS reason with AI why_this_fits', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(ENHANCE_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(ENHANCE_RESPONSE);
     const res = await call('/recommendations/dashboard', { ...BASE, lms_recommendations: TEST_LMS_RECS });
     const data = await res.json() as any;
     expect(data.ai_status).toBe('enhanced');
@@ -146,7 +120,7 @@ describe('Enhance path (LMS recs present)', () => {
   });
 
   it('prompt includes learner skills and goals', async () => {
-    const gw = mockAiGateway(ENHANCE_RESPONSE);
+    const gw = createMockGateway(ENHANCE_RESPONSE);
     (env as any).AI_GATEWAY = gw;
     await call('/recommendations/dashboard', { ...BASE, lms_recommendations: TEST_LMS_RECS });
     const sentBody = await (gw.fetch.mock.calls[0][0] as Request).json() as any;
@@ -157,7 +131,7 @@ describe('Enhance path (LMS recs present)', () => {
   });
 
   it('AI03 down → returns LMS recs without explanations, ai_status degraded', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(null, false);
+    (env as any).AI_GATEWAY = createMockGateway(null, false);
     const res = await call('/recommendations/dashboard', { ...BASE, lms_recommendations: TEST_LMS_RECS });
     const data = await res.json() as any;
     expect(data.ai_status).toBe('degraded');
@@ -191,7 +165,7 @@ describe('Fallback engine (LMS recs empty)', () => {
   });
 
   it('AI03 down + no Vectorize → degraded, still returns candidates', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(null, false);
+    (env as any).AI_GATEWAY = createMockGateway(null, false);
     const res = await call('/recommendations/dashboard', BASE);
     const data = await res.json() as any;
     expect(data.ai_status).toBe('degraded');
@@ -240,7 +214,7 @@ describe('Next course', () => {
 
   it('boosts courses listing completed course as prerequisite', async () => {
     // Equal AI scores → prereq boost should put Advanced Python (prereq: Python Basics) on top
-    (env as any).AI_GATEWAY = mockAiGateway(llmResponse([
+    (env as any).AI_GATEWAY = createMockGateway(createLlmResponse([
       { course_title: 'Advanced Python', score: 70, reason: 'Builds on Python Basics.' },
       { course_title: 'Deep Learning', score: 70, reason: 'Ambitious next step.' },
     ]));
@@ -250,7 +224,7 @@ describe('Next course', () => {
   });
 
   it('next prompt mentions the completed course', async () => {
-    const gw = mockAiGateway(SCORING_RESPONSE);
+    const gw = createMockGateway(SCORING_RESPONSE);
     (env as any).AI_GATEWAY = gw;
     await call('/recommendations/next', { ...BASE, course_id: 'c1' });
     const sentBody = await (gw.fetch.mock.calls[0][0] as Request).json() as any;
@@ -264,7 +238,7 @@ describe('Next course', () => {
 
 describe('KV cache', () => {
   it('second call hits cache (cache.hit span + source cache)', async () => {
-    const gw = mockAiGateway(SCORING_RESPONSE);
+    const gw = createMockGateway(SCORING_RESPONSE);
     (env as any).AI_GATEWAY = gw;
     await call('/recommendations/dashboard', BASE);
     const res2 = await call('/recommendations/dashboard', BASE);
@@ -277,7 +251,7 @@ describe('KV cache', () => {
   });
 
   it('refresh=true bypasses cache', async () => {
-    const gw = mockAiGateway(SCORING_RESPONSE);
+    const gw = createMockGateway(SCORING_RESPONSE);
     (env as any).AI_GATEWAY = gw;
     await call('/recommendations/dashboard', BASE);
     await call('/recommendations/dashboard', { ...BASE, refresh: true });
@@ -285,10 +259,10 @@ describe('KV cache', () => {
   });
 
   it('degraded responses are not cached', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(null, false);
+    (env as any).AI_GATEWAY = createMockGateway(null, false);
     await call('/recommendations/dashboard', BASE);
     // Recovery: gateway back up → fresh generation, not cached degraded copy
-    (env as any).AI_GATEWAY = mockAiGateway(SCORING_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(SCORING_RESPONSE);
     const res = await call('/recommendations/dashboard', BASE);
     const data = await res.json() as any;
     expect(data.ai_status).toBe('generated');
@@ -319,7 +293,7 @@ describe('Observability', () => {
   });
 
   it('degraded marked in span with missing signals listed', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(null, false);
+    (env as any).AI_GATEWAY = createMockGateway(null, false);
     await call('/recommendations/dashboard', BASE);
     const top = spans('recs.generate')[0];
     expect(top.ai_status).toBe('degraded');
@@ -329,7 +303,7 @@ describe('Observability', () => {
   });
 
   it('enhance tier visible when LMS recs present', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(ENHANCE_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(ENHANCE_RESPONSE);
     await call('/recommendations/dashboard', { ...BASE, lms_recommendations: TEST_LMS_RECS });
     const top = spans('recs.generate')[0];
     expect(top.tier).toBe('enhance');

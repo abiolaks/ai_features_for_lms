@@ -4,22 +4,10 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
 } from 'cloudflare:test';
+import { createMockGateway, spyOnSpans } from '../../shared/test-utils';
 import worker from '../src/index';
 
-// ──── Mocks ────
-
-function mockAiGateway(response: object, ok = true) {
-  return {
-    fetch: vi.fn().mockImplementation(() =>
-      Promise.resolve(
-        new Response(JSON.stringify(response), {
-          status: ok ? 200 : 502,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      ),
-    ),
-  };
-}
+// ──── Fixtures ────
 
 const DEFAULT_LLM_RESPONSE = {
   response: JSON.stringify({
@@ -134,7 +122,7 @@ function mockConsoleLog(...args: unknown[]) {
 
 beforeAll(() => {
   vi.stubGlobal('fetch', lmsFetch);
-  (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+  (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
 });
 
 beforeEach(() => {
@@ -142,7 +130,7 @@ beforeEach(() => {
   setupLmsMocks();
   vi.stubGlobal('fetch', lmsFetch);
   vi.spyOn(console, 'log').mockImplementation(mockConsoleLog);
-  (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+  (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
 });
 
 // ──── Helpers ────
@@ -353,7 +341,7 @@ describe('Insight generation', () => {
 
 describe('Degraded mode', () => {
   it('returns placeholder when AI gateway fails', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({}, false);
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
 
     const res = await generateInsight(VALID_BODY);
     const body: any = await res.json();
@@ -364,7 +352,7 @@ describe('Degraded mode', () => {
   });
 
   it('returns degraded when LLM returns non-JSON', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({
+    (env as any).AI_GATEWAY = createMockGateway({
       response: 'No JSON here, just some friendly text.',
       model_used: 'llama',
       provider: 'cloudflare',
@@ -396,7 +384,7 @@ describe('Degraded mode', () => {
 
 describe('Prompt construction', () => {
   it('includes score and correct/wrong counts', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -412,7 +400,7 @@ describe('Prompt construction', () => {
   });
 
   it('includes course progress context', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -425,7 +413,7 @@ describe('Prompt construction', () => {
   });
 
   it('includes per-question timing', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -439,7 +427,7 @@ describe('Prompt construction', () => {
   });
 
   it('includes tone rules in prompt', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -454,7 +442,7 @@ describe('Prompt construction', () => {
   });
 
   it('uses standard tier', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_LLM_RESPONSE);
     const spy = (env as any).AI_GATEWAY.fetch;
     spy.mockClear();
 
@@ -582,7 +570,7 @@ describe('Observability spans', () => {
   });
 
   it('emits insight.generate span with degraded status when gateway fails', async () => {
-    (env as any).AI_GATEWAY = mockAiGateway({}, false);
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
 
     await generateInsight(VALID_BODY);
 
