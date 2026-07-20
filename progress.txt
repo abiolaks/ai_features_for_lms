@@ -1,20 +1,27 @@
 # Project Progress — AI Features for LMS
 
-## MVP — Completed
-- [x] AI03 LLM Gateway — deployed, 14/14 tests pass
-- [x] AI01 Content Indexing — deployed, 16/16 tests pass
-- [x] AI04 Grounded Q&A Tutor — deployed, 15/15 tests pass
+## Complete (6/7)
+- [x] AI03 LLM Gateway — deployed, 14/14 tests
+- [x] AI01 Content Indexing — deployed, 16/16 tests
+- [x] AI04 Grounded Tutor — deployed, 15/15 tests
+- [x] AI08 Post-Quiz Insights — deployed, 30/30 tests
+- [x] AI06 Learning Paths — deployed, 20/20 tests
+- [x] AI07 Recommendations — deployed, 23/23 tests
+- [x] AI07b Fallback Engine — baked into AI07, 0 dedicated tests
 
-## Beyond MVP — Completed
-- [x] AI06 Learning Paths — deployed, 40/40 tests pass
-- [x] AI08 Post-Quiz Insights — deployed, 28/28 tests pass
+## Pending (1/7)
+- [ ] AI13 Demo Dashboard — built, pending deploy (needs CLOUDFLARE_API_TOKEN with Pages write)
 
-## In Progress
-
-## Up Next
-- [ ] AI07 Recommendations
-- [ ] AI13 Demo Dashboard
+## Infrastructure
+- [x] Vectorize `lms-lessons` — 1024-dim cosine, 14/16 videos indexed
+- [x] D1 `lms-platform` — org_budgets table (token tracking)
+- [x] KV `LMS_CACHE` — 24h TTL recommendation cache
+- [x] R2 `lms-content-staging` — PDF/PPTX staging
+- [x] Queue `indexing-jobs` — async content indexing
+- [x] Service Bindings (AI_GATEWAY, VECTORIZE_INDEX, TUTOR_SESSION, LMS_CACHE)
 
 ## Cleaned Up
-- [x] workers/pdf-extractor/ — removed (replaced by unpdf in ai-indexing)
-- [x] Issues/platform/ — removed (LMS is external, API via api.json)
+- [x] `workers/pdf-extractor/` — replaced by unpdf in ai-indexing
+- [x] `Issues/platform/` — LMS is external, API via REST
+- [x] `Issues/ai/archive/` — 16 stale pre-CF slice definitions
+- [x] `docs/` — 12 superseded design docs removed, 8 kept
