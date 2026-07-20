@@ -9,8 +9,21 @@
 - [x] AI07 Recommendations — deployed, 23/23 tests
 - [x] AI07b Fallback Engine — baked into AI07, 0 dedicated tests
 
-## Pending (1/7)
+## Pending (1/7 Phase 1)
 - [ ] AI13 Demo Dashboard — built, pending deploy (needs CLOUDFLARE_API_TOKEN with Pages write)
+
+## Phase 2 (8 features — starting today)
+- [ ] F01 CV Parsing
+- [ ] F02 Mentor Matching
+- [ ] F03 Skill-Gap Analysis
+- [ ] F04 Org Plan Tuning
+- [ ] F05 Admin Analytics Narratives
+- [ ] F06 Platform Assistant
+- [ ] F07 Question Generation
+- [ ] F08 Quality Checks
+
+## Phase 3 (later)
+- [ ] F09 Assessment Approval Workflow — split: AI (API) + LMS (UI)
 
 ## Infrastructure
 - [x] Vectorize `lms-lessons` — 1024-dim cosine, 14/16 videos indexed

@@ -47,16 +47,19 @@ Issues/
 ├── status.json                  ← Build progress tracker (6/7 complete)
 ├── prd-ai-features-phase-1.md   ← PRD (delivered)
 ├── ai/                          ← Active slice issues
-│   ├── AI13-demo-dashboard.md   ← Last remaining slice
+│   ├── AI13-demo-dashboard.md   ← Phase 1 (last remaining)
+│   ├── F01-cv-parsing.md        ← Phase 2
+│   ├── F02-mentor-matching.md   ← Phase 2
+│   ├── F03-skill-gap-analysis.md ← Phase 2
+│   ├── F04-org-plan-tuning.md   ← Phase 2
+│   ├── F05-admin-analytics-narratives.md ← Phase 2
+│   ├── F06-platform-assistant.md ← Phase 2
+│   ├── F07-question-generation.md ← Phase 2
+│   ├── F08-quality-checks.md    ← Phase 2
 │   └── done/                    ← Completed slices
-│       ├── AI01-content-indexing.md
-│       ├── AI03-llm-gateway.md
-│       ├── AI04-tutor.md
-│       ├── AI06-learning-paths.md
-│       ├── AI07-recommendations.md
-│       ├── AI07b-recommendations-fallback-engine.md
-│       └── AI08-post-quiz-insights.md
-└── future/                      ← Phase 2/3 features (F01-F05)
+│       ├── AI01, AI03, AI04, AI06, AI07, AI07b, AI08
+└── future/                      ← Phase 3
+    └── F09-assessment-approval-workflow.md
 ```
 
 ## Slice Status
@@ -71,6 +74,25 @@ Issues/
 | 6 | AI07 Recommendations | `ai-recommendations` | ~480 | 23/23 | ✅ Deployed |
 | * | AI07b Fallback Engine | (baked into AI07) | ~200 | — | ✅ Built |
 | 7 | AI13 Demo Dashboard | `ai-dashboard` (Pages) | ~350 | — | ⏳ Built, pending deploy |
+
+### Phase 2 (Pending)
+
+| # | Slice | Title | Depends On |
+|---|-------|-------|------------|
+| 8 | F01 | CV Parsing | AI03, LMS |
+| 9 | F02 | Mentor Matching | AI03, LMS profile + catalog |
+| 10 | F03 | Skill-Gap Analysis | AI03, LMS analytics |
+| 11 | F04 | Org Plan Tuning | AI03, LMS |
+| 12 | F05 | Admin Analytics Narratives | AI03, LMS analytics |
+| 13 | F06 | Platform Assistant | AI03, LMS catalog + lessons, Vectorize |
+| 14 | F07 | Question Generation | AI03 (quality tier), LMS lessons, Vectorize |
+| 15 | F08 | Quality Checks | F07, AI03 |
+
+### Phase 3
+
+| # | Slice | Title | Notes |
+|---|-------|-------|-------|
+| 16 | F09 | Assessment Approval Workflow | Split: AI (D1 API) + LMS (admin UI) |
 
 ## What Changed From Original Plan
 

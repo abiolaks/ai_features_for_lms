@@ -1,6 +1,6 @@
 {
   "architecture": "Cloudflare Workers + Vectorize (direct embed + upsert)",
-  "total_slices": 7,
+  "total_slices": 15,
   "vectorize": {
     "index": "lms-lessons",
     "dimensions": 1024,
@@ -55,6 +55,54 @@
       "title": "Demo Dashboard",
       "pr_lines": 200,
       "github": 7
+    },
+    "F01": {
+      "title": "CV Parsing",
+      "github": 11,
+      "status": "pending",
+      "phase": 2
+    },
+    "F02": {
+      "title": "Mentor Matching",
+      "github": 12,
+      "status": "pending",
+      "phase": 2
+    },
+    "F03": {
+      "title": "Skill-Gap Analysis",
+      "github": 13,
+      "status": "pending",
+      "phase": 2
+    },
+    "F06": {
+      "status": "pending",
+      "title": "Platform Assistant",
+      "phase": 2,
+      "github": null
+    },
+    "F07": {
+      "status": "pending",
+      "title": "Question Generation",
+      "phase": 2,
+      "github": null
+    },
+    "F08": {
+      "status": "pending",
+      "title": "Quality Checks",
+      "phase": 2,
+      "github": null
+    },
+    "F04": {
+      "status": "pending",
+      "title": "Org Plan Tuning",
+      "phase": 2,
+      "github": 14
+    },
+    "F05": {
+      "status": "pending",
+      "title": "Admin Analytics Narratives",
+      "phase": 2,
+      "github": 15
     }
   },
   "contingency": {
@@ -65,28 +113,14 @@
       "github": 5
     }
   },
-  "future_phase2": {
-    "F01": {
-      "title": "CV Parsing",
-      "github": 11
-    },
-    "F02": {
-      "title": "Mentor Matching",
-      "github": 12
-    },
-    "F03": {
-      "title": "Skill-Gap Analysis",
-      "github": 13
-    }
-  },
+  "future_phase2": {},
   "future_phase3": {
-    "F04": {
-      "title": "Org Plan Tuning",
-      "github": 14
-    },
-    "F05": {
-      "title": "Admin Analytics Narratives",
-      "github": 15
+    "F09": {
+      "status": "pending",
+      "title": "Assessment Approval Workflow",
+      "phase": 3,
+      "github": null,
+      "notes": "Split: AI team (storage API) + LMS team (admin UI)"
     }
   },
   "deleted": [
@@ -96,5 +130,5 @@
     "AI05 \u2014 LMS already has richer learner profiles"
   ],
   "completed_slices": 6,
-  "pending_slices": 1
+  "pending_slices": 9
 }
