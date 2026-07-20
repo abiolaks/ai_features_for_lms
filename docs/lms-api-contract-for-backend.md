@@ -1050,106 +1050,53 @@ curl -X POST https://ai-indexing.yomi-alarape.workers.dev/backfill \
 
 ## PDF & PPT Content Indexing
 
-> **Status:** Spec defined, worker-side code pending. Backend should send data in this format once PDF extraction is implemented.
+> **Status:** Built. ai-indexing Worker extracts PDF/PPTX from R2 using `unpdf`.
 
-### How It Works (End-to-End)
+### How It Works — Two Paths
+
+#### Path A: R2 Upload (recommended — zero LMS code)
+
+The LMS uploads PDF/PPTX files to the `lms-content-staging` R2 bucket. The ai-indexing Worker fetches and extracts text automatically.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  LMS Backend (Python)                                           │
-│                                                                  │
-│  PDF → PyPDF2/pdfplumber extracts text per page                 │
-│  PPT → python-pptx extracts text per slide                      │
-│                                                                  │
-│  Sends to ai-indexing worker with pre-extracted text:           │
-│                                                                  │
-│  POST /index                                                     │
-│  {                                                               │
-│    "event": "publish",                                           │
-│    "org_id": "org-wragby",                                       │
-│    "entity": {                                                   │
-│      "id": "lesson-pdf-123",                                     │
-│      "title": "Introduction to Python",                          │
-│      "contentType": "pdf",        ← "pdf" or "ppt"              │
-│      "content": "Chapter 1: Getting Started\nPython is a..."     │
-│                    ↑ Full extracted text (all pages/slides)     │
-│    }                                                             │
-│  }                                                               │
-└──────────────────────┬───────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  LMS Backend                                               │
+│                                                            │
+│  1. Upload file to R2 (lms-content-staging bucket)         │
+│  2. Send webhook with r2Key pointing to the file:          │
+│                                                            │
+│  POST /index                                                │
+│  {                                                          │
+│    "event": "publish",                                      │
+│    "org_id": "org-wragby",                                   │
+│    "entity": {                                              │
+│      "id": "lesson-pdf-123",                                │
+│      "title": "Introduction to Python",                     │
+│      "contentType": "pdf",                                  │
+│      "r2Key": "uploads/lesson-pdf-123.pdf"                  │
+│    }                                                        │
+│  }                                                          │
+└──────────────────────┬─────────────────────────────────────┘
                        │
                        ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  ai-indexing Worker                                              │
-│                                                                  │
-│  1. Reads entity.content                                         │
-│  2. Chunks text into ~2000-char pieces (sentence boundaries)     │
-│  3. Embeds each chunk → bge-large-en-v1.5 (1024-dim)            │
-│  4. Stores in Vectorize with metadata:                           │
-│     {                                                             │
-│       title: "Introduction to Python",                            │
-│       lesson_id: "lesson-pdf-123",                                │
-│       content_type: "pdf",                                        │
-│       page_number: 12,          ← page the chunk came from       │
-│       content: "List comprehensions provide..."                   │
-│     }                                                             │
-└──────────────────────┬───────────────────────────────────────────┘
-                       │
-                       ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  ai-tutor Worker (at query time)                                 │
-│                                                                  │
-│  Learner: "How do list comprehensions work?"                     │
-│                                                                  │
-│  → Embeds question → searches Vectorize                          │
-│  → Top matches: chunk-5 (page 12, score 0.91),                   │
-│                 chunk-3 (page 3, score 0.72)                     │
-│                                                                  │
-│  → Builds grounded prompt for LLM:                              │
-│    [Source: Introduction to Python, Page 12]                     │
-│    List comprehensions provide a concise way to create lists...  │
-│                                                                  │
-│    [Source: Introduction to Python, Page 3]                      │
-│    Python supports several data structures including lists...    │
-│                                                                  │
-│  → LLM answers with citations:                                   │
-│    "List comprehensions use the syntax [expr for item in         │
-│     iterable] to create new lists concisely.                     │
-│     [Introduction to Python, Page 12]"                           │
-└──────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  ai-indexing Worker                                        │
+│                                                            │
+│  1. Fetches file from R2 (lms-content-staging)             │
+│  2. Extracts text:                                         │
+│     PDF → unpdf (JS, Workers-compatible)                   │
+│     PPTX → custom parser (shapes → text)                   │
+│  3. Chunks text into ~2000-char pieces                     │
+│  4. Embeds each chunk → bge-large-en-v1.5 (1024-dim)       │
+│  5. Stores in Vectorize with metadata (content_type,        │
+│     page/slide number, lesson_id, course_id, org_id)       │
+│  6. Queued: 202 Accepted, processed async                  │
+└────────────────────────────────────────────────────────────┘
 ```
 
-### What the LMS Must Send
+#### Path B: LMS Pre-Extraction (optimized — faster indexing)
 
-For PDFs and PPTs, the `/index` webhook payload must include the full extracted text. **This is the LMS backend's responsibility.** Python has mature, reliable libraries for this.
-
-#### PDF Extraction (recommended libraries)
-
-```python
-# Option 1: PyPDF2 (simpler, no layout)
-from PyPDF2 import PdfReader
-reader = PdfReader("course.pdf")
-text = "\n\n".join(page.extract_text() for page in reader.pages)
-
-# Option 2: pdfplumber (better table/layout handling)
-import pdfplumber
-with pdfplumber.open("course.pdf") as pdf:
-    text = "\n\n".join(page.extract_text() for page in pdf.pages)
-```
-
-#### PPT Extraction
-
-```python
-from pptx import Presentation
-prs = Presentation("slides.pptx")
-text = "\n\n".join(
-    f"Slide {i+1}: " + " ".join(
-        shape.text for shape in slide.shapes if hasattr(shape, "text")
-    )
-    for i, slide in enumerate(prs.slides)
-)
-```
-
-#### Webhook Payload
+The LMS extracts text upfront and sends it in `entity.content`. The Worker skips R2 fetch + extraction, going straight to chunking.
 
 ```json
 {
@@ -1159,36 +1106,43 @@ text = "\n\n".join(
     "id": "lesson-pdf-123",
     "title": "Introduction to Python",
     "contentType": "pdf",
-    "content": "<full extracted text from all pages/slides>"
+    "content": "Chapter 1: Getting Started\nPython is a..."
   }
 }
 ```
 
-The worker handles the rest — chunking, embedding, and storing.
+If `entity.content` is present, the Worker uses it directly. If absent but `r2Key` is present, it fetches from R2. If neither is present, it falls back to metadata-only indexing (title + description).
+
+### Extraction Libraries
+
+| Format | Library | Where It Runs |
+|--------|---------|--------------|
+| PDF | `unpdf` (JS) | ai-indexing Worker |
+| PPTX | Custom parser (shapes → text) | ai-indexing Worker |
+| Video (VTT) | WebVTT parser | ai-indexing Worker |
+
+**The LMS does NOT need Python PDF libraries.** The Worker handles extraction natively in JavaScript. If the LMS wants to pre-extract for speed, any text extraction tool works — just send the text in `entity.content`.
 
 ### Chunking Strategy
 
-| Content Type | How It's Chunked | How Citations Work |
-|-------------|-----------------|-------------------|
-| **Video** | Transcript split at ~2000 chars, sentence boundaries | `[Title]` — since videos are continuous |
-| **PDF** | Text split at ~2000 chars, sentence boundaries | `[Title, Page X]` — page number from metadata |
-| **PPT** | Each slide's text is typically small enough to be 1 chunk | `[Title, Slide X]` — slide number from metadata |
-
-**For long PDF pages** (dense text >2000 chars): the worker splits the page into multiple chunks, all tagged with the same page number. So a 4000-char page becomes 2 chunks, both showing `Page 5`.
+| Content Type | How It's Chunked | Citation Format |
+|-------------|-----------------|----------------|
+| **Video** | Transcript split at ~2000 chars, sentence boundaries | `[Title]` |
+| **PDF** | Text split at ~2000 chars, sentence boundaries | `[Title, Page X]` |
+| **PPT** | Each slide typically 1 chunk | `[Title, Slide X]` |
 
 ### LMS Responsibilities vs Worker Responsibilities
 
 | Task | Who | Why |
 |------|-----|-----|
-| Extract text from PDF/PPT | **LMS Backend** | Python has mature PDF libraries (PyPDF2, pdfplumber); JS PDF parsing is fragile and bloats the worker |
-| Segment by page/slide | **LMS Backend** | The LMS knows the document structure; the worker only sees raw text |
-| Chunk text for embedding | **Worker** | Already built — splits at sentence boundaries, handles Vectorize metadata limits |
-| Embed & store vectors | **Worker** | Uses Cloudflare Workers AI (bge-large-en-v1.5) |
+| Upload PDF/PPTX to R2 | **LMS Backend** | Simple file upload to R2 bucket using S3 API |
+| Extract text from PDF/PPTX | **Worker** (unpdf) | No Python dependency needed. unpdf runs natively in Workers. |
+| Optionally pre-extract text | **LMS Backend** (optional) | Faster indexing — skip the R2 fetch + extraction step |
+| Chunk text for embedding | **Worker** | Splits at sentence boundaries, handles Vectorize metadata limits |
+| Embed & store vectors | **Worker** | Uses Workers AI (bge-large-en-v1.5) |
 | Query & cite | **Worker (tutor)** | Searches Vectorize, builds grounded prompts, returns citations |
 
 ### Citation Format by Content Type
-
-When the learner asks a question, the tutor returns citations in this format:
 
 ```json
 {
@@ -1214,13 +1168,15 @@ When the learner asks a question, the tutor returns citations in this format:
 
 ### Implementation Checklist
 
-- [ ] **LMS Backend:** Add PDF extraction with PyPDF2 or pdfplumber
-- [ ] **LMS Backend:** Add PPT extraction with python-pptx
-- [ ] **LMS Backend:** Send extracted text as `entity.content` in the `/index` webhook
-- [ ] **ai-indexing Worker:** Read `entity.content` if present (fallback to `buildMetadataContent`)
-- [ ] **ai-indexing Worker:** Store `content_type` in Vectorize metadata
-- [ ] **ai-tutor Worker:** Include `source_type` and `location` in citation response
-- [ ] **ai-tutor Worker:** Format page/slide numbers in LLM prompt context
+- [x] **ai-indexing Worker:** Fetch PDF/PPTX from R2 (lms-content-staging)
+- [x] **ai-indexing Worker:** Extract text via unpdf (PDF) + custom parser (PPTX)
+- [x] **ai-indexing Worker:** Read `entity.content` if present (pre-extracted path)
+- [x] **ai-indexing Worker:** Fall back to metadata-only if no content available
+- [x] **ai-indexing Worker:** Store `content_type`, `page_number`, `slide_number` in Vectorize metadata
+- [x] **ai-tutor Worker:** Include `source_type` and `location` in citation response
+- [x] **ai-tutor Worker:** Format page/slide numbers in LLM prompt context
+- [ ] **LMS Backend (optional):** Upload PDF/PPTX files to R2 bucket if using Path A
+- [ ] **LMS Backend (optional):** Pre-extract and send `entity.content` if using Path B
 
 ---
 
