@@ -10,6 +10,7 @@
 import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
+import { fetchProfile, fetchCatalog, fetchProgress } from "../../shared/lms-data";
 
 export interface Env {
   AI_GATEWAY: Fetcher;
@@ -126,127 +127,38 @@ async function handleGenerate(
   setAttr(dataSpan, "learner_id", body.learner_id);
   setAttr(dataSpan, "org_id", body.org_id);
 
-  // ── LMS: Fetch learner profile ──
-  let profile = body.profile;
-  let profileFromLms = false;
-  try {
-    const profileSpan = startSpan("lms.fetch");
-    setAttr(profileSpan, "endpoint", "profile");
-    setAttr(profileSpan, "learner_id", body.learner_id);
-    const resp = await fetchLms(env, {
-      path: `/api/v1/learner/profile`,
-    });
-    setAttr(profileSpan, "status", resp.status);
-    if (resp.ok) {
-      const raw = await resp.json() as any;
-      const data = raw.data || raw;
-      const lmsProfile = {
-        skills: data.skills || [],
-        goals: data.goals || "",
-        experience_level: data.experience_level || "beginner",
-        interests: data.interests || [],
-        streak_days: data.gamification?.login_streak || 0,
-        points: data.gamification?.total_points || 0,
-      };
-      // Only use LMS profile if it has actual data
-      if (lmsProfile.skills.length > 0 || lmsProfile.goals) {
-        profile = lmsProfile;
-      }
-      profileFromLms = true;
-    }
-    endSpan(profileSpan);
-  } catch {
-    // LMS not available — use stub data from request body
-    setAttr(dataSpan, "lms_available", false);
-  }
+  // ── Fetch learner profile ──
+  const profileSpan = startSpan("lms.fetch");
+  setAttr(profileSpan, "endpoint", "profile");
+  setAttr(profileSpan, "learner_id", body.learner_id);
+  const { profile: lmsProfile, fromLms: profileFromLms } = await fetchProfile(env, body.profile);
+  setAttr(profileSpan, "status", profileFromLms ? 200 : "stub");
+  endSpan(profileSpan);
 
-  // ── LMS: Fetch course catalogue ──
-  let catalogue = body.catalogue || [];
-  let catalogFromLms = false;
-  try {
-    const catalogSpan = startSpan("lms.fetch");
-    setAttr(catalogSpan, "endpoint", "catalog");
-    setAttr(catalogSpan, "org_id", body.org_id);
-    
-    // Try authenticated catalog first, fall back to public if empty
-    let resp = await fetchLms(env, { path: `/api/v1/catalog?organization_id=${body.org_id}` });
-    setAttr(catalogSpan, "status", resp.status);
-    
-    if (resp.ok) {
-      const raw = await resp.json() as any;
-      const items = raw.data || raw;
-      // If authenticated catalog is empty, try public endpoint
-      if (!items || items.length === 0) {
-        resp = await fetchLms(env, { path: `/api/v1/public/courses` });
-        if (resp.ok) {
-          const publicRaw = await resp.json() as any;
-          const publicItems = publicRaw.data || publicRaw;
-          if (publicItems && publicItems.length > 0) {
-            const lmsCourses = publicItems.map((c: any) => ({
-              title: c.title,
-              difficulty: c.difficultyLevel || c.difficulty,
-              category: c.category,
-              prerequisites: c.prerequisites || [],
-            }));
-            catalogue = lmsCourses;
-            catalogFromLms = true;
-          }
-        }
-      } else {
-        const lmsCourses = items.map((c: any) => ({
-          title: c.title,
-          difficulty: c.difficultyLevel || c.difficulty,
-          category: c.category,
-          prerequisites: c.prerequisites || [],
-        }));
-        catalogue = lmsCourses;
-        catalogFromLms = true;
-      }
-    }
-    setAttr(catalogSpan, "course_count", catalogue.length);
-    endSpan(catalogSpan);
-  } catch {
-    // LMS not available — use stub data from request body
-  }
+  // ── Fetch course catalogue ──
+  const catalogSpan = startSpan("lms.fetch");
+  setAttr(catalogSpan, "endpoint", "catalog");
+  setAttr(catalogSpan, "org_id", body.org_id);
+  const { catalogue, fromLms: catalogFromLms } = await fetchCatalog(env, body.org_id, body.catalogue);
+  setAttr(catalogSpan, "status", catalogFromLms ? 200 : "stub");
+  setAttr(catalogSpan, "course_count", catalogue.length);
+  endSpan(catalogSpan);
 
-  // ── LMS: Fetch learner progress ──
-  let progress = body.progress || [];
-  let progressFromLms = false;
-  try {
-    const progressSpan = startSpan("lms.fetch");
-    setAttr(progressSpan, "endpoint", "progress");
-    setAttr(progressSpan, "learner_id", body.learner_id);
-    const resp = await fetchLms(env, {
-      path: `/api/v1/progress/user?userId=${body.learner_id}`,
-    });
-    setAttr(progressSpan, "status", resp.status);
-    if (resp.ok) {
-      const raw = await resp.json() as any;
-      const data = raw.data || raw;
-      const enrollments = data.enrollments || [];
-      const lmsProgress = enrollments.map((e: any) => ({
-        title: e.courseTitle,
-        status: e.status === "completed" ? "completed" : "in_progress",
-        progress_pct: parseInt(e.progressPercent) || 0,
-      }));
-      // Only use LMS data if it returned progress; otherwise keep stub data
-      if (lmsProgress.length > 0) {
-        progress = lmsProgress;
-      }
-      progressFromLms = true;
-    }
-    setAttr(progressSpan, "enrollment_count", progress.length);
-    endSpan(progressSpan);
-  } catch {
-    // LMS not available — use stub data from request body
-  }
+  // ── Fetch learner progress ──
+  const progressSpan = startSpan("lms.fetch");
+  setAttr(progressSpan, "endpoint", "progress");
+  setAttr(progressSpan, "learner_id", body.learner_id);
+  const { progress, fromLms: progressFromLms } = await fetchProgress(env, body.learner_id, body.progress);
+  setAttr(progressSpan, "status", progressFromLms ? 200 : "stub");
+  setAttr(progressSpan, "enrollment_count", progress.length);
+  endSpan(progressSpan);
 
   setAttr(dataSpan, "profile_from_lms", profileFromLms);
   setAttr(dataSpan, "catalog_from_lms", catalogFromLms);
   setAttr(dataSpan, "progress_from_lms", progressFromLms);
   setAttr(dataSpan, "catalogue_courses", catalogue.length);
   setAttr(dataSpan, "progress_entries", progress.length);
-  setAttr(dataSpan, "has_profile", !!(profile && (profile.skills?.length || profile.goals)));
+  setAttr(dataSpan, "has_profile", !!(lmsProfile.skills.length || lmsProfile.goals));
   endSpan(dataSpan);
 
   // ── Insufficient data check ──
@@ -257,8 +169,8 @@ async function handleGenerate(
     }, 200);
   }
 
-  const hasProfile = profile && (profile.skills?.length || profile.goals);
-  if (!hasProfile || !profile) {
+  const hasProfile = lmsProfile && (lmsProfile.skills.length || lmsProfile.goals);
+  if (!hasProfile) {
     return json({
       path: catalogue.slice(0, 5).map((c, i) => ({
         course_title: c.title,
@@ -269,10 +181,8 @@ async function handleGenerate(
     }, 200);
   }
 
-  // TypeScript can't narrow `let` across try/catch — reassign to const
-  const learnerProfile: LearnerProfile = profile;
-
   // ── Build prompt ──
+  const learnerProfile = lmsProfile;
   const prompt = buildPrompt(learnerProfile, catalogue, progress);
 
   // ═══════════════════════════════════════════════════════
