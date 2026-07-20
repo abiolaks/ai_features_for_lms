@@ -42,7 +42,7 @@ All features ─────────────→  AI13 Dashboard (Cloudfl
 ```
 Issues/
 ├── README.md                    ← This file
-├── ARCHITECTURE.md              ← Architecture decisions
+├── ARCHITECTURE.md              ← Architecture decisions (see architecture/module-architecture.md)
 ├── TECH_PRINCIPLES.md           ← Code conventions, PR rules
 ├── status.json                  ← Build progress tracker (6/7 complete)
 ├── prd-ai-features-phase-1.md   ← PRD (delivered)

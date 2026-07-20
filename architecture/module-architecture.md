@@ -1,6 +1,6 @@
 # Module Architecture — AI Workers (Cloudflare)
 
-> Last updated: 2026-07-05. Reflects what is actually deployed, not planned.
+> Last updated: 2026-07-18. Reflects what is actually deployed, not planned.
 
 ---
 
@@ -12,9 +12,9 @@
 | `ai-indexing` | `ai-indexing.yomi-alarape.workers.dev` | ✅ Live | Queue consumer, Vectorize, Stream VTT extraction |
 | `ai-tutor` | `ai-tutor.yomi-alarape.workers.dev` | ✅ Live | Durable Objects (SQLite), WebSocket streaming |
 | `ai-paths` | `ai-paths.yomi-alarape.workers.dev` | ✅ Live | Service binding to ai-gateway |
-| `ai-dashboard` | — | ❌ Stub | No code |
-| `ai-insights` | — | ❌ Stub | No code |
-| `ai-recommendations` | — | ❌ Stub | No code |
+| `ai-insights` | `ai-insights.yomi-alarape.workers.dev` | ✅ Live | 30/30 tests, quiz analysis + review links |
+| `ai-recommendations` | `ai-recommendations.yomi-alarape.workers.dev` | ✅ Live | 23/23 tests, enhance + engine tiers, KV cache |
+| `ai-dashboard` | `ai-dashboard.pages.dev` | ⏳ Built | Pages static site, 6 worker cards |
 
 ---
 
@@ -219,19 +219,7 @@
 
 **Trade-off:** No auto-chunking, no hybrid search, no auto-reranking from AI Search. Re-add these manually later if needed.
 
-### 7. PDF/PPT Text Extraction by LMS (Not Worker)
-
-**Decision:** The LMS backend extracts text from PDFs/PPTs using Python libraries. Worker receives pre-extracted text as `entity.content`.
-
-**Why:**
-- Python has mature PDF libraries (PyPDF2, pdfplumber, python-pptx)
-- JS PDF parsing is fragile (complex layouts break), no OCR, bloats worker bundle
-- Keeping worker small and focused on embedding/indexing
-- LMS already knows document structure (pages, slides) for citation metadata
-
-**Trade-off:** LMS team must implement extraction. Worker gets one-line change to read `entity.content`.
-
-### 8. Service Bindings for Inter-Worker Communication
+### 7. Service Bindings for Inter-Worker Communication
 
 **Decision:** Workers communicate via Cloudflare service bindings, not public URLs.
 
@@ -243,7 +231,7 @@
 
 **Trade-off:** Tight coupling — workers must be deployed in the same Cloudflare account.
 
-### 9. PDF/PPT Extraction via unpdf in Worker (not LMS, not Python)
+### 8. PDF/PPT Extraction via unpdf in Worker (not LMS, not Python)
 
 **Decision:** Use `unpdf` (Workers-compatible PDF.js wrapper) directly in the `ai-indexing` Worker. PDFs are fetched from R2, extracted, and indexed — all in the Worker. No LMS extraction code needed.
 
@@ -319,13 +307,49 @@ Queue consumer:
 
 | Resource | Type | Used By | Purpose |
 |----------|------|---------|---------|
-| `lms-lessons` | Vectorize Index (1024-dim) | ai-indexing, ai-tutor | Embedded lesson content |
-| `indexing-jobs` | Queue | ai-indexing | Async indexing pipeline |
-| `TutorSession` | Durable Object | ai-tutor | Per-learner conversation state |
+| `lms-lessons` | Vectorize Index (1024-dim) | ai-indexing, ai-tutor, ai-recommendations | Embedded lesson content + content similarity scoring |
+| `indexing-jobs` | Queue | ai-indexing | Async indexing pipeline (batch_size=3, retry 3x) |
+| `TutorSession` | Durable Object | ai-tutor | Per-learner conversation state (SQLite) |
 | `lms-content-staging` | R2 Bucket | ai-indexing | PDF/PPT/document storage |
-| `lms-platform` | D1 Database | ai-gateway | Org budget tracking |
-| `LMS_CACHE` | KV Namespace | ai-gateway | Cache (reserved, not used yet) |
+| `lms-platform` | D1 Database | ai-gateway | Org budget tracking (org_budgets table) |
+| `LMS_CACHE` | KV Namespace | ai-recommendations | 24h TTL recommendation cache |
 | `unpdf` | npm package (1.1MB) | ai-indexing | PDF text extraction (PDF.js for Workers) |
 | `CLOUDFLARE_STREAM_API_TOKEN` | Secret | ai-indexing | Fetch VTT captions from Stream |
 | `CLOUDFLARE_ACCOUNT_ID` | Secret | ai-indexing | Stream API account |
 | `LMS_WEBHOOK_SECRET` | Secret | ai-indexing | Authenticate LMS webhooks |
+
+---
+
+## Scope Expansion Flow (Tutor)
+
+```
+Default: lesson scope
+  filter: { lesson_id, org_id }
+    │
+    ├── Content found → return answer
+    └── No content → scope_expansion_suggested: true
+                      │
+                      ▼
+                  Module scope
+                  filter: { module_id, course_id, org_id }
+                      │
+                      ├── Content found → return answer
+                      └── No content → scope_expansion_suggested: true
+                                        │
+                                        ▼
+                                    Course scope
+                                    filter: { course_id, org_id }
+```
+
+## LMS Integration Points
+
+All AI Workers read from LMS via `GET /api/v1/...` with `LMS_INTERNAL_KEY`.
+The shared client is at `workers/shared/fetch-lms.ts`.
+
+| Worker | LMS Endpoints Called |
+|--------|---------------------|
+| ai-indexing | `/v1/lessons/{id}` (metadata enrichment) |
+| ai-tutor | `/v1/lessons/{id}` (citation metadata) |
+| ai-paths | `/v1/learner/profile`, `/v1/catalog`, `/v1/progress/user` |
+| ai-recommendations | `/v1/courses/recommendations`, `/v1/learner/profile`, `/v1/catalog`, `/v1/progress/user` |
+| ai-insights | `/v1/learner/assessments/{id}`, `/v1/learner/assessments/attempts/{id}`, `/v1/progress/user`, `/v1/modules/{id}/lessons` |
