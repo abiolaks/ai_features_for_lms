@@ -1,204 +1,129 @@
 # Agent Instructions — AI-Powered LMS
 
-## Project Context
+## Project Status
 
-This project builds a complete Learning Management Platform from scratch — the LMS itself first, then an AI layer on top. Everything runs locally with open-source tools. Zero cloud dependencies. Zero API keys.
+**6/7 AI workers complete** + Demo Dashboard. All deployed to Cloudflare Workers (`*.yomi-alarape.workers.dev`). The LMS is an external service hosted on Azure (`lms-staging-api-*.azurewebsites.net`).
 
-The LMS hosts free, high-quality courses from MIT OpenCourseWare, YouTube, and other open sources. Learners browse, enroll, track progress, and take quizzes. The AI layer adds a grounded tutor, personalized learning paths, recommendations, post-quiz insights, a platform assistant, AI-generated assessments, and quality checks.
+## Architecture
+
+```
+LMS (Azure Staging)               AI Workers (Cloudflare Edge)         LLM
+──────────────────────            ─────────────────────────────       ───────────
+REST API                          Cloudflare Workers (TypeScript)      Workers AI
+
+POST /webhook  ──────────→  AI01 Indexing ─→ Stream (VTT) ─→ Vectorize
+/v1/lessons/{id}    ←──────  AI04 Tutor ──→ Vectorize ──→ AI03 Gateway ──→ Workers AI
+/v1/catalog         ←──────  AI06 Paths ──→ AI03 Gateway ──→ Workers AI
+/v1/learner/profile ←──────  AI07 Recs ───→ KV + Vectorize + AI03 ──→ Workers AI
+/v1/progress/user   ←──────  AI08 Insights ─→ AI03 Gateway ──→ Workers AI
+All workers ────────────────  AI13 Dashboard (Pages)
+```
+
+**All AI Workers read from LMS via `GET /api/v1/...` with `LMS_INTERNAL_KEY`.**
+**AI03 Gateway is the only Worker that calls Workers AI. All others call AI03 via Service Binding.**
+**Vectorize (lms-lessons, 1024-dim, cosine) handles all retrieval.**
 
 Full context and implementation plan is in `Issues/`:
-- `Issues/README.md` — structure, stack, wave order, PR checklist
-- `Issues/TECH_PRINCIPLES.md` — open-source stack, code conventions, PR rules (READ THIS FIRST)
-- `Issues/platform/` — 12 platform foundation slices (P00–P10)
-- `Issues/ai/` — 16 AI feature slices (AI01–AI13)
-- `docs/vertical-slices-phase-1.md` — original vertical slice definitions (pre-split)
-- `docs/prd-ai-features-phase-1.md` — requirements, user stories, decisions
-
-## Using opensrc for Deep Dependency Context
-
-When building, implementing, or debugging, use `opensrc` to fetch and read the source code of dependencies instead of relying on documentation alone. The project uses open-source libraries exclusively — their source is the authoritative reference.
-
-### Cached Dependencies
-
-These packages have been pre-fetched and are available locally:
-
-| Package | opensrc path | Used in |
-|---------|-------------|---------|
-| fastapi | `opensrc path pypi:fastapi` | Every service |
-| pydantic | `opensrc path pypi:pydantic` | Request/response models |
-| uvicorn | `opensrc path pypi:uvicorn` | ASGI server |
-| sqlalchemy | `opensrc path pypi:sqlalchemy` | Database models (P02) |
-| alembic | `opensrc path pypi:alembic` | Schema migrations (P02) |
-| httpx | `opensrc path pypi:httpx` | Async HTTP client (P10 gateway, tests) |
-| pytest | `opensrc path pypi:pytest` | All tests |
-
-### When to Use opensrc
-
-**Always fetch source before:**
-- Wrapping an SDK or building adapters around a library
-- Debugging unexpected library behaviour
-- Understanding async patterns, retry logic, or configuration options
-- Determining if a feature needs a workaround for library limitations
-- Understanding Web Component lifecycle (for P00 UI components)
-
-**How to use:**
-```bash
-# Fetch a package (if not already cached)
-opensrc fetch pypi:package-name
-
-# Get the path to cached source
-opensrc path pypi:package-name
-
-# Read the source
-read $(opensrc path pypi:fastapi)/fastapi/applications.py
-```
-
-### Packages to Fetch When Needed
-
-```bash
-# Core stack
-opensrc fetch pypi:lancedb                 # Vector database (AI slices)
-opensrc fetch pypi:sentence-transformers   # Embeddings (AI01a, AI02, AI11)
-opensrc fetch pypi:textstat                # Reading level estimation (AI11)
-opensrc fetch pypi:cachetools              # In-memory LRU cache (AI07)
-
-# Observability
-opensrc fetch pypi:opentelemetry-api       # OTel SDK
-opensrc fetch pypi:opentelemetry-sdk
-opensrc fetch pypi:opentelemetry-exporter-otlp
-opensrc fetch pypi:openinference-instrumentation  # LLM spans for Phoenix
-
-# LLM
-opensrc fetch pypi:tiktoken                # Token counting (AI01a, AI03)
-
-# Content ingestion
-opensrc fetch pypi:yt-dlp                  # YouTube playlist import (P04)
-opensrc fetch pypi:beautifulsoup4          # HTML parsing for MIT OCW (P04)
-opensrc fetch pypi:lxml                    # Fast HTML parser
-opensrc fetch pypi:pyyaml                  # Manual course YAML (P04)
-
-# Testing
-opensrc fetch pypi:pytest-asyncio          # Async test support
-opensrc fetch pypi:httpx                   # Async HTTP test client
-```
-
-## Key Architecture Decisions
-
-### Platform (Issues/platform/)
-- **Self-built LMS** — not bolting AI onto an existing platform. P01–P10 build the full platform: courses, learners, enrollments, quizzes, admin.
-- **Monorepo** — one repo, many services. Shared `lib/` for DB, auth, tracing, observability, and UI components.
-- **Single SQLite database** — one file, zero config. Same file shared across all services. Alembic migrations.
-- **API key auth** — simple `X-API-Key` header. SHA-256 hashed in DB. No OAuth, no passwords.
-- **Platform Gateway (P10)** — single port `8000`. Auth at the edge. Routes to all backend services.
-- **Course content from open sources** — MIT OCW, YouTube playlists, manually-authored YAML. Importers in P04.
-
-### AI Layer (Issues/ai/)
-- **Single LLM Gateway (AI03)** — all AI services call it, never call Ollama directly. Wraps Ollama's HTTP API behind an adapter.
-- **LanceDB for vector search** — embedded, no server, data stored as files. Used by chunking (AI01b) and retrieval (AI02).
-- **Local embeddings** — `all-MiniLM-L6-v2` via sentence-transformers. 384-dim, runs on CPU. Used by chunking, retrieval, and duplicate detection.
-- **Open-source LLMs via Ollama** — `llama3.2` for standard tier, `mistral` for quality tier. No API keys.
-- **Org isolation** — enforced at the query level in LanceDB. Not in application code.
-- **Phoenix observability (P01b)** — every LLM call, embedding, and retrieval is traced. Evals run in CI.
-
-### LMS Gateway Integration (Workers ↔ LMS Backend)
-
-AI Workers fetch live learner/catalog/progress data from the LMS backend via REST API. The shared client is at `workers/shared/fetch-lms.ts`.
-
-**Auth:** `X-API-Key: <LMS_INTERNAL_KEY>` header on every request. No query param auth.
-
-**Env vars every worker needs:**
-- `LMS_GATEWAY_URL` — e.g. `https://lms.example.com` (no trailing slash)
-- `LMS_INTERNAL_KEY` — shared secret, validated by LMS middleware
-
-**Secrets per worker:**
-```bash
-cd workers/<worker-name>
-npx wrangler secret put LMS_GATEWAY_URL
-npx wrangler secret put LMS_INTERNAL_KEY
-```
-
-**API contract:** `docs/lms-api-contract-for-backend.md` — the authoritative reference.
-
-**Endpoint conventions (must match exactly):**
-
-| Endpoint | Method | Query params | Notes |
-|----------|--------|-------------|-------|
-| `/api/v1/learner/profile` | GET | None | LMS identifies learner from key context |
-| `/api/v1/catalog` | GET | None | LMS infers org from key context |
-| `/api/v1/progress/user` | GET | `?userId=<id>` | **NOT** `learner_id` — use `userId` |
-| `/api/v1/lessons/{id}` | GET | None | Used by ai-indexing for metadata enrichment |
-| `/api/v1/health` | GET | None | Liveness check |
-
-**Response format:** All endpoints wrap data: `{ success: bool, data: ..., message?: string }`. Workers extract `.data`.
-
-**Field name mappings (LMS → Worker):**
-
-| LMS field | Worker field | Endpoint |
-|-----------|-------------|----------|
-| `difficultyLevel` | `difficulty` | catalog |
-| — | `prerequisites` | catalog (not yet in LMS — add to `CourseResource`) |
-| `courseTitle` | `title` | progress |
-| `progressPercent` (string) | `progress_pct` (number) | progress |
-| `status: "enrolled"` | `status: "in_progress"` | progress |
-| `gamification.login_streak` | `streak_days` | profile |
-| `gamification.total_points` | `points` | profile |
-
-**Stub → Live migration pattern:** Every LMS fetch is wrapped in try/catch. If LMS returns non-ok or is unreachable, the worker falls back to stub data from the request body (`body.profile`, `body.catalogue`, `body.progress`). This means tests pass without LMS secrets, and production degrades gracefully.
-
-**Debugging LMS fetches:**
-```bash
-# View live fetch status in logs
-npx wrangler tail --format pretty
-# Look for lms.fetch spans in structured logs
-```
-
-Each fetch emits an `lms.fetch` span with `endpoint`, `status`, and record counts. The `data.fetch` span reports `profile_from_lms`, `catalog_from_lms`, `progress_from_lms` booleans.
-
-**Workers that call LMS:**
-
-| Worker | Fetches | Data used for |
-|--------|---------|--------------|
-| ai-paths | profile, catalog, progress | Path generation prompt |
-| ai-indexing | lesson detail | Metadata enrichment for Vectorize |
-| ai-recommendations | profile, catalog, progress | (planned) |
-| ai-insights | progress, assessments | (planned) |
-| ai-dashboard | catalog, progress | (planned) |
-
-### UI (P00)
-- **Web Components** — `<lms-card>`, `<lms-tabs>`, `<lms-table>`, etc. Shadow DOM. Zero framework dependencies.
-- **TypeScript** — compiled to ES modules with `tsc`. No bundler, no build step beyond type-checking.
-- **CSS custom properties** — design tokens in `lib/ui/tokens/`. Responsive via CSS Grid `auto-fit`.
-- **Style guide** — live at `localhost:8005`. Every component with copy-paste HTML snippets.
+- `Issues/README.md` — structure, slice map, build order
+- `Issues/TECH_PRINCIPLES.md` — code conventions, PR rules
+- `Issues/ARCHITECTURE.md` — architecture decisions
+- `Issues/ai/` — active slice issues
+- `Issues/ai/done/` — completed slices
+- `Issues/status.json` — build progress tracker
 
 ## Tech Stack
 
-- **Language:** Python 3.11+ (backend), TypeScript (frontend)
-- **Web framework:** FastAPI + uvicorn
-- **Database:** SQLite via SQLAlchemy + Alembic
-- **Vector DB:** LanceDB (embedded)
-- **LLM:** Ollama (llama3.2, mistral)
-- **Embeddings:** sentence-transformers (all-MiniLM-L6-v2)
-- **Cache:** cachetools (in-memory LRU)
-- **Observability:** OpenTelemetry + Arize Phoenix + OpenInference
-- **Content ingestion:** yt-dlp, BeautifulSoup4, PyYAML
-- **Reading level:** textstat
-- **Token counting:** tiktoken
-- **Testing:** pytest + httpx
-- **Frontend:** Web Components + TypeScript + CSS custom properties
+| Component | Choice |
+|-----------|--------|
+| **Compute** | Cloudflare Workers (TypeScript) |
+| **LLM** | Workers AI (`@cf/meta/llama-3.2-3b-instruct`) |
+| **Embeddings** | Workers AI (`@cf/baai/bge-large-en-v1.5`, 1024-dim) |
+| **Vector DB** | Cloudflare Vectorize (`lms-lessons` index) |
+| **Cache** | Cloudflare KV (LMS_CACHE, 24h TTL) |
+| **Relational** | Cloudflare D1 (`lms-platform`, org budget tracking) |
+| **Session State** | Durable Objects + SQLite (tutor) |
+| **File Storage** | Cloudflare R2 (`lms-content-staging`) |
+| **Video** | Cloudflare Stream (hosting + VTT captions) |
+| **Async Jobs** | Cloudflare Queues (`indexing-jobs`) |
+| **Observability** | Workers Logs + structured JSON spans + `wrangler tail` |
+| **CI/CD** | `wrangler deploy` + `wrangler pages deploy` |
+| **Testing** | Vitest + `@cloudflare/vitest-pool-workers` |
 
-## Service Port Map
+### Auth
 
-| Port | Service | Slice |
-|------|---------|-------|
-| 8000 | Platform Gateway | P10 |
-| 6006 | Phoenix UI | P01b |
-| 4317 | Phoenix OTLP collector | P01b |
-| 8002 | Demo Dashboard | AI13 |
-| 8005 | Style Guide | P00 |
-| 8010 | Content Management | P03 |
-| 8011 | Learner Accounts | P05 |
-| 8012 | Course Catalogue | P06 |
-| 8013 | Enrollment & Progress | P07 |
-| 8014 | Quiz Engine | P08 |
-| 8015 | Admin Dashboard | P09 |
-| 10000 | Azurite (Blob emulator) | P01 |
+- **LMS → AI Indexing:** `X-Webhook-Secret` header (validates webhooks)
+- **AI Workers → LMS:** `X-API-Key` or `Bearer` token via `LMS_INTERNAL_KEY`
+- **AI Workers ↔ AI Gateway:** Service Bindings (private, no auth needed)
+- **LMS Frontend → AI Workers:** Open currently — will sit behind LMS Platform Gateway
+
+### Shared Code
+
+- `workers/shared/fetch-lms.ts` — LMS API client (all workers use this)
+- `workers/shared/cors.ts` — CORS headers + JSON helper (all frontend-facing workers)
+- `workers/shared/types.ts` — shared TypeScript interfaces
+
+### Worker Ports (all Cloudflare-hosted, no local ports)
+
+| Worker | URL | Exposed to |
+|--------|-----|------------|
+| ai-gateway | Internal (service binding) | Other Workers |
+| ai-indexing | `ai-indexing.yomi-alarape.workers.dev` | LMS Backend (webhooks) |
+| ai-tutor | `ai-tutor.yomi-alarape.workers.dev` | LMS Frontend |
+| ai-paths | `ai-paths.yomi-alarape.workers.dev` | LMS Frontend |
+| ai-recommendations | `ai-recommendations.yomi-alarape.workers.dev` | LMS Frontend |
+| ai-insights | `ai-insights.yomi-alarape.workers.dev` | LMS Frontend |
+| ai-dashboard | `ai-dashboard.pages.dev` | LMS Frontend (Pages) |
+
+### Service Bindings
+
+| Binding | Used By | Points To |
+|---------|---------|-----------|
+| `AI_GATEWAY` | ai-paths, ai-tutor, ai-recommendations, ai-insights | ai-gateway Worker |
+| `VECTORIZE_INDEX` | ai-indexing, ai-tutor, ai-recommendations | `lms-lessons` Vectorize index |
+| `INDEXING_QUEUE` | ai-indexing | `indexing-jobs` Queue |
+| `TUTOR_SESSION` | ai-tutor | TutorSession Durable Object |
+| `LMS_CACHE` | ai-recommendations, ai-dashboard | KV namespace |
+
+### Key Docs
+
+| Doc | Purpose |
+|-----|---------|
+| `docs/tech-stack.md` | Current infrastructure, all bindings, URL map |
+| `docs/lms-api-contract-for-backend.md` | **THE** authoritative API contract |
+| `docs/lms-webhook-integration.md` | Webhook integration guide for LMS team |
+| `docs/prd-ai-features-phase-1.md` | Original PRD (historical) |
+| `docs/ai-mvp-scope.md` | MVP scope decisions, what was cut |
+| `docs/ai-testing-guide.md` | Testing patterns for each worker |
+| `docs/ai-workers-deployment.md` | Deployment log |
+| `docs/api-contract.md` | AI services API contract (supplement to lms-api-contract) |
+| `Issues/status.json` | Build progress (6/7 complete) |
+
+### LMS Endpoints Workers Call
+
+| Endpoint | Used By | Notes |
+|----------|---------|-------|
+| `/api/v1/learner/profile` | ai-paths, ai-recommendations | LMS infers learner from auth context |
+| `/api/v1/catalog` | ai-paths, ai-recommendations | LMS infers org from auth context |
+| `/api/v1/progress/user?userId=<id>` | ai-paths, ai-recommendations, ai-insights | UUID required |
+| `/api/v1/lessons/{id}` | ai-indexing, ai-tutor, ai-insights | Metadata enrichment |
+| `/api/v1/courses/recommendations` | ai-recommendations | Baseline recs (staging: returns empty) |
+| `/api/v1/learner/assessments/{id}` | ai-insights | Quiz metadata |
+| `/api/v1/learner/assessments/attempts/{id}` | ai-insights | Quiz attempt details |
+| `/api/v1/modules/{id}/lessons` | ai-insights | Review links |
+
+**Response format:** All endpoints wrap data: `{ success: bool, data: ..., message?: string }`. Workers extract `.data`.
+
+### Deploy Checklist
+
+```bash
+# Secrets per worker (set once)
+npx wrangler secret put LMS_GATEWAY_URL   # ai-paths, ai-indexing, ai-recommendations, ai-insights
+npx wrangler secret put LMS_INTERNAL_KEY  # ai-paths, ai-indexing, ai-recommendations, ai-insights
+npx wrangler secret put LMS_WEBHOOK_SECRET     # ai-indexing only
+npx wrangler secret put CLOUDFLARE_STREAM_API_TOKEN  # ai-indexing only
+npx wrangler secret put CLOUDFLARE_ACCOUNT_ID        # ai-indexing only
+
+# Deploy
+cd workers/<name> && npx wrangler deploy    # Workers
+cd workers/ai-dashboard && npx wrangler pages deploy public --project-name ai-dashboard  # Pages
+```
