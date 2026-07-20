@@ -390,7 +390,7 @@ AI Workers call this to check if the LMS is reachable before making data calls. 
 
 ## Endpoint 6 — Assessment & Attempt Data (AI08 Post-Quiz Insights)
 
-> ✅ **Live and verified** against staging (2026-07-17). The `ai-insights` worker calls all three after a quiz is submitted.
+> **Live and verified** against staging (2026-07-17). The `ai-insights` worker calls all three after a quiz is submitted.
 
 ### 6a. Attempt Detail
 
@@ -433,7 +433,7 @@ Header: X-API-Key: <LMS_INTERNAL_KEY>
 }
 ```
 
-> ⚠️ **Contract note:** `responses[]` must be an array of **objects** (as above), not JSON-encoded strings. `options` is a **dict keyed `A`–`D`**, not a list. The worker normalizes both shapes defensively, but this is the canonical form.
+> **Contract note:** `responses[]` must be an array of **objects** (as above), not JSON-encoded strings. `options` is a **dict keyed `A`–`D`**, not a list. The worker normalizes both shapes defensively, but this is the canonical form.
 
 **Fields AI Workers use:**
 
