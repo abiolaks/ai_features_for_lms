@@ -10,6 +10,7 @@
 import { fetchLms } from '../../shared/fetch-lms';
 import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan } from '../../shared/observability';
+import { callGateway } from '../../shared/gateway';
 
 export interface Env {
   AI_GATEWAY: Fetcher;
@@ -308,22 +309,12 @@ async function handleGenerate(
     const gwSpan = startSpan('ai_gateway.generate');
     setAttr(gwSpan, 'tier', 'standard');
 
-    const gatewayResp = await env.AI_GATEWAY.fetch(
-      new Request('https://ai-gateway/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          messages: [{ role: 'user', content: prompt }],
-          tier: 'standard',
-          org_id: body.org_id,
-        }),
-      }),
-    );
+    const result = await callGateway(env.AI_GATEWAY, prompt, body.org_id);
 
-    setAttr(gwSpan, 'status', gatewayResp.status);
+    setAttr(gwSpan, 'status', result ? 200 : 502);
     endSpan(gwSpan);
 
-    if (!gatewayResp.ok) {
+    if (!result) {
       setAttr(insightSpan, 'ai_gateway_error', true);
       setAttr(insightSpan, 'ai_status', 'degraded');
       setAttr(insightSpan, 'tone_encouraging', true);
@@ -331,14 +322,11 @@ async function handleGenerate(
       return json(placeholderResponse(), 200);
     }
 
-    const llm = await gatewayResp.json() as any;
-    setAttr(insightSpan, 'llm_model', llm.model_used || 'unknown');
-    setAttr(insightSpan, 'llm_tokens', llm.tokens_used || 0);
+    setAttr(insightSpan, 'llm_model', result.model);
+    setAttr(insightSpan, 'llm_tokens', result.tokens);
 
     // Parse LLM response
-    const rawResponse: unknown = llm.response;
-    const responseText: string =
-      typeof rawResponse === 'string' ? rawResponse : JSON.stringify(rawResponse);
+    const responseText: string = result.text;
 
     const parsed = parseInsight(responseText, reviewLinks, insightSpan, moduleLessons, courseId);
 

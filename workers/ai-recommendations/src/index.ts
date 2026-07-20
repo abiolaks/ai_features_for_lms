@@ -20,6 +20,7 @@ import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
 import { fetchProfile, fetchCatalog, fetchProgress, type LearnerProfile as LmsLearnerProfile, type CatalogueCourse as LmsCatalogueCourse, type ProgressEntry as LmsProgressEntry } from "../../shared/lms-data";
+import { callGateway } from "../../shared/gateway";
 
 export interface Env {
   AI_GATEWAY: Fetcher;
@@ -384,7 +385,7 @@ async function enhanceLmsRecs(
     `Return ONLY a JSON array: [{"course_title": "...", "why_this_fits": "..."}]`,
   ].join("\n");
 
-  const text = await callGateway(env, prompt, orgId);
+  const text = await callGatewayWithSpan(env, prompt, orgId);
   if (!text) {
     // AI03 down → return LMS recs without explanations
     return {
@@ -542,7 +543,7 @@ async function aiScoringSignal(
     `Return ONLY a JSON array: [{"course_title": "...", "score": 85, "reason": "..."}]`,
   ].join("\n");
 
-  const text = await callGateway(env, prompt, orgId);
+  const text = await callGatewayWithSpan(env, prompt, orgId);
   if (!text) {
     setAttr(span, "ok", false);
     endSpan(span);
@@ -573,40 +574,20 @@ async function aiScoringSignal(
 }
 
 // ════════════════════════════════════════════════════════
-//  AI03 Gateway + JSON parsing helpers
+//  AI03 Gateway call (wraps shared adapter with span tracking)
 // ════════════════════════════════════════════════════════
 
-async function callGateway(env: Env, prompt: string, orgId: string): Promise<string | null> {
+async function callGatewayWithSpan(env: Env, prompt: string, orgId: string): Promise<string | null> {
   const span = startSpan("ai_gateway.generate");
   setAttr(span, "tier", "standard");
-  try {
-    const resp = await env.AI_GATEWAY.fetch(
-      new Request("https://ai-gateway/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: prompt }],
-          tier: "standard",
-          org_id: orgId,
-        }),
-      })
-    );
-    setAttr(span, "status", resp.status);
-    if (!resp.ok) {
-      endSpan(span);
-      return null;
-    }
-    const llm = (await resp.json()) as any;
-    setAttr(span, "llm_model", llm.model_used || "unknown");
-    setAttr(span, "llm_tokens", llm.tokens_used || 0);
-    endSpan(span);
-    const raw: unknown = llm.response;
-    return typeof raw === "string" ? raw : JSON.stringify(raw);
-  } catch (err: any) {
-    setAttr(span, "error", err.message);
-    endSpan(span);
-    return null;
+  const result = await callGateway(env.AI_GATEWAY, prompt, orgId);
+  setAttr(span, "status", result ? 200 : 502);
+  if (result) {
+    setAttr(span, "llm_model", result.model);
+    setAttr(span, "llm_tokens", result.tokens);
   }
+  endSpan(span);
+  return result?.text ?? null;
 }
 
 function parseJsonArray(text: string): any[] | null {

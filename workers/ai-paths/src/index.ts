@@ -11,6 +11,7 @@ import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
 import { fetchProfile, fetchCatalog, fetchProgress } from "../../shared/lms-data";
+import { callGateway } from "../../shared/gateway";
 
 export interface Env {
   AI_GATEWAY: Fetcher;
@@ -200,22 +201,12 @@ async function handleGenerate(
     const gatewayReqSpan = startSpan("ai_gateway.generate");
     setAttr(gatewayReqSpan, "tier", "standard");
 
-    const gatewayResp = await env.AI_GATEWAY.fetch(
-      new Request("https://ai-gateway/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: prompt }],
-          tier: "standard",
-          org_id: body.org_id,
-        }),
-      })
-    );
+    const result = await callGateway(env.AI_GATEWAY, prompt, body.org_id);
 
-    setAttr(gatewayReqSpan, "status", gatewayResp.status);
+    setAttr(gatewayReqSpan, "status", result ? 200 : 502);
     endSpan(gatewayReqSpan);
 
-    if (!gatewayResp.ok) {
+    if (!result) {
       setAttr(pathSpan, "ai_gateway_error", true);
       setAttr(pathSpan, "ai_status", "degraded");
       setAttr(pathSpan, "course_count", 0);
@@ -229,17 +220,11 @@ async function handleGenerate(
       }, 200);
     }
 
-    const llm = await gatewayResp.json() as any;
-    setAttr(pathSpan, "llm_model", llm.model_used || "unknown");
-    setAttr(pathSpan, "llm_tokens", llm.tokens_used || 0);
+    setAttr(pathSpan, "llm_model", result.model);
+    setAttr(pathSpan, "llm_tokens", result.tokens);
 
     // Normalize: Workers AI sometimes returns response as already-parsed object
-    const rawResponse: unknown = llm.response;
-    setAttr(pathSpan, "response_type", typeof rawResponse);
-    const responseText: string =
-      typeof rawResponse === "string"
-        ? rawResponse
-        : JSON.stringify(rawResponse);
+    const responseText = result.text;
 
     const path = parsePath(responseText, catalogue, progress, pathSpan);
     const isFallback = path.length > 0 && path.every((c) => !c.why_this_fits);
