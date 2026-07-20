@@ -20,6 +20,16 @@ Learner ──→ AI Tutor / Paths / Recs ──→ AI03 Gateway ──→ LLM (
 | **ai-recommendations** | Enhanced recs + fallback engine, 24h KV cache | `ai-recommendations.yomi-alarape.workers.dev` | 23/23 ✅ |
 | **ai-dashboard** | Static Pages site — 6 live worker cards | `ai-dashboard.pages.dev` | Built ⏳ |
 
+## Phase 2 — Up Next
+
+| Issue | Title | GitHub |
+|-------|-------|--------|
+| F01 | CV Parsing | [#11](https://github.com/datazone-ai/ai_features_for_lms/issues/11) |
+| F02 | Mentor Matching | [#12](https://github.com/datazone-ai/ai_features_for_lms/issues/12) |
+| F03 | Skill-Gap Analysis | [#13](https://github.com/datazone-ai/ai_features_for_lms/issues/13) |
+| F04 | Org Plan Tuning | [#14](https://github.com/datazone-ai/ai_features_for_lms/issues/14) |
+| F05 | Admin Analytics Narratives | [#15](https://github.com/datazone-ai/ai_features_for_lms/issues/15) |
+
 ## Tech Stack
 
 | Component | Choice |
