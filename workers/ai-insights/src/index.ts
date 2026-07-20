@@ -11,12 +11,9 @@ import { fetchLms } from '../../shared/fetch-lms';
 import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan } from '../../shared/observability';
 import { callGateway } from '../../shared/gateway';
+import type { BaseEnv } from '../../shared/env';
 
-export interface Env {
-  AI_GATEWAY: Fetcher;
-  LMS_GATEWAY_URL: string;
-  LMS_INTERNAL_KEY: string;
-}
+export interface Env extends BaseEnv {}
 
 // ──── Types ────
 

@@ -21,16 +21,14 @@ import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
 import { fetchProfile, fetchCatalog, fetchProgress, type LearnerProfile as LmsLearnerProfile, type CatalogueCourse as LmsCatalogueCourse, type ProgressEntry as LmsProgressEntry } from "../../shared/lms-data";
 import { callGateway } from "../../shared/gateway";
+import type { BaseEnv } from "../../shared/env";
 
-export interface Env {
-  AI_GATEWAY: Fetcher;
+export interface Env extends BaseEnv {
   LMS_CACHE: KVNamespace;
-  AI?: any; // Workers AI (embeddings) — optional, mocked in tests
-  VECTORIZE_INDEX?: VectorizeIndex; // lms-lessons — optional
-  LMS_GATEWAY_URL: string;
-  LMS_INTERNAL_KEY: string;
-  REC_WEIGHT_CONTENT?: string; // default 0.35
-  REC_WEIGHT_AI?: string; // default 0.65
+  AI?: any;
+  VECTORIZE_INDEX?: VectorizeIndex;
+  REC_WEIGHT_CONTENT?: string;
+  REC_WEIGHT_AI?: string;
 }
 
 const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
