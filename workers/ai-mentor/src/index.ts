@@ -11,6 +11,7 @@ import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan } from '../../shared/observability';
 import { callGateway } from '../../shared/gateway';
 import { fetchProfile, fetchCatalog, fetchProgress } from '../../shared/lms-data';
+import { parseLlmJson } from '../../shared/llm-parser';
 import type { LearnerProfile, CatalogueCourse, ProgressEntry } from '../../shared/lms-data';
 import type { BaseEnv } from '../../shared/env';
 
@@ -339,11 +340,9 @@ function parseGapAnalysis(
   learnerSkills: string[],
   gapMap: Map<string, CatalogueCourse[]>,
 ): SkillGapResponse {
-  // Extract JSON from response (LLM may wrap in markdown code blocks)
-  const codeBlock = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  const jsonStr = codeBlock ? codeBlock[1] : response.match(/\{[\s\S]*\}/)?.[0];
+  const parsed = parseLlmJson<{ gaps?: any[]; summary?: string }>(response);
 
-  if (!jsonStr) {
+  if (!parsed) {
     return {
       learner_skills: learnerSkills,
       gaps: [],
@@ -352,42 +351,32 @@ function parseGapAnalysis(
     };
   }
 
-  try {
-    const parsed = JSON.parse(jsonStr);
-    const rawGaps: any[] = parsed.gaps || [];
+  const rawGaps: any[] = parsed.gaps || [];
 
-    // Enrich gaps with computed data where LLM was inaccurate
-    const gaps: SkillGap[] = rawGaps.map((g: any) => {
-      const skillLower = (g.skill || '').toLowerCase().trim();
-      const computedCourses = gapMap.get(skillLower);
-      const coursesAvailable = computedCourses ? computedCourses.length : (g.courses_available || 0);
-      // Compute estimated hours from actual matched courses
-      const estimatedHours = (computedCourses && computedCourses.length > 0)
-        ? estimateHoursForCourses(computedCourses)
-        : g.estimated_hours || 10;
-      return {
-        skill: g.skill || skillLower,
-        current_level: g.current_level || 'none',
-        required_level: g.required_level || 'beginner',
-        courses_available: coursesAvailable,
-        estimated_hours: estimatedHours,
-      };
-    });
+  // Enrich gaps with computed data where LLM was inaccurate
+  const gaps: SkillGap[] = rawGaps.map((g: any) => {
+    const skillLower = (g.skill || '').toLowerCase().trim();
+    const computedCourses = gapMap.get(skillLower);
+    const coursesAvailable = computedCourses ? computedCourses.length : (g.courses_available || 0);
+    // Compute estimated hours from actual matched courses
+    const estimatedHours = (computedCourses && computedCourses.length > 0)
+      ? estimateHoursForCourses(computedCourses)
+      : g.estimated_hours || 10;
+    return {
+      skill: g.skill || skillLower,
+      current_level: g.current_level || 'none',
+      required_level: g.required_level || 'beginner',
+      courses_available: coursesAvailable,
+      estimated_hours: estimatedHours,
+    };
+  });
 
-    return {
-      learner_skills: learnerSkills,
-      gaps,
-      summary: parsed.summary || 'Review your skill gaps to find the best next steps.',
-      ai_status: 'generated',
-    };
-  } catch {
-    return {
-      learner_skills: learnerSkills,
-      gaps: [],
-      summary: response.slice(0, 500) || 'Skill gap analysis unavailable right now — check back shortly.',
-      ai_status: 'degraded',
-    };
-  }
+  return {
+    learner_skills: learnerSkills,
+    gaps,
+    summary: parsed.summary || 'Review your skill gaps to find the best next steps.',
+    ai_status: 'generated',
+  };
 }
 
 // ════════════════════════════════════════════════════════

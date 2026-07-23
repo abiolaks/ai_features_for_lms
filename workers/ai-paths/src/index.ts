@@ -12,6 +12,7 @@ import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
 import { fetchProfile, fetchCatalog, fetchProgress } from "../../shared/lms-data";
 import { callGateway } from "../../shared/gateway";
+import { parseLlmJson } from "../../shared/llm-parser";
 import type { BaseEnv } from "../../shared/env";
 
 export interface Env extends BaseEnv {}
@@ -316,29 +317,19 @@ function parsePath(
   progress: ProgressEntry[],
   pathSpan: SpanContext,
 ): PathCourse[] {
-  // Extract JSON from response (LLM may wrap in markdown code blocks)
-  const codeBlock = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  const jsonStr = codeBlock ? codeBlock[1] : response.match(/\{[\s\S]*\}/)?.[0];
-  if (!jsonStr) {
-    setAttr(pathSpan, "parse_failed", "no_json");
+  const parsed = parseLlmJson<{ courses?: any[]; path?: any[] }>(response);
+  if (!parsed) {
+    setAttr(pathSpan, "parse_failed", true);
     return fallbackPath(catalogue);
   }
 
-  let courses: PathCourse[];
-  try {
-    const parsed = JSON.parse(jsonStr);
-    // Accept both "courses" and "path" as the array key
-    const rawList = parsed.courses || parsed.path || [];
-    setAttr(pathSpan, "llm_returned_courses", rawList.length);
-    courses = rawList.map((c: any, i: number) => ({
-      course_title: c.course_title || c.title || "Unknown",
-      order: c.order || i + 1,
-      why_this_fits: c.why_this_fits || c.reason || c.explanation || "",
-    }));
-  } catch {
-    setAttr(pathSpan, "parse_failed", "json_error");
-    return fallbackPath(catalogue);
-  }
+  const rawList = parsed.courses || parsed.path || [];
+  setAttr(pathSpan, "llm_returned_courses", rawList.length);
+  let courses: PathCourse[] = rawList.map((c: any, i: number) => ({
+    course_title: c.course_title || c.title || "Unknown",
+    order: c.order || i + 1,
+    why_this_fits: c.why_this_fits || c.reason || c.explanation || "",
+  }));
 
   // Safety: filter out completed courses
   const completedTitles = new Set(

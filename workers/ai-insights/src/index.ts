@@ -11,6 +11,7 @@ import { fetchLms } from '../../shared/fetch-lms';
 import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan } from '../../shared/observability';
 import { callGateway } from '../../shared/gateway';
+import { parseLlmJson } from '../../shared/llm-parser';
 import type { BaseEnv } from '../../shared/env';
 
 export interface Env extends BaseEnv {}
@@ -445,12 +446,10 @@ function parseInsight(
   lessons: LessonSummary[] = [],
   courseId = '',
 ): InsightResponse {
-  // Extract JSON from response (LLM may wrap in markdown code blocks)
-  const codeBlock = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  const jsonStr = codeBlock ? codeBlock[1] : response.match(/\{[\s\S]*\}/)?.[0];
+  const parsed = parseLlmJson<{ insight?: string; response?: string; insight_text?: string; missed_topics?: string[]; topics?: string[] }>(response);
 
-  if (!jsonStr) {
-    setAttr(insightSpan, 'parse_failed', 'no_json');
+  if (!parsed) {
+    setAttr(insightSpan, 'parse_failed', true);
     return {
       insight_text: response.slice(0, 500) || 'Insights unavailable right now — check back shortly.',
       missed_topics: [],
@@ -459,54 +458,43 @@ function parseInsight(
     };
   }
 
-  try {
-    const parsed = JSON.parse(jsonStr);
-    const insightText = parsed.insight || parsed.response || parsed.insight_text || '';
-    const topicNames: string[] = parsed.missed_topics || parsed.topics || [];
+  const insightText = parsed.insight || parsed.response || parsed.insight_text || '';
+  const topicNames: string[] = parsed.missed_topics || parsed.topics || [];
 
-    // Map LLM topic names to review links. Prefer a direct match against
-    // lesson titles (the LLM often names topics after lesson content),
-    // then fall back to overlap with question-derived topics, then index.
-    const missedTopics: MissedTopic[] = topicNames.map((name: string, i: number) => {
-      if (courseId && lessons.length > 0) {
-        const direct = matchLessonForTopic(name, lessons);
-        if (direct) {
-          return { topic: name, review_link: `/courses/${courseId}/lessons/${direct.id}` };
-        }
+  // Map LLM topic names to review links. Prefer a direct match against
+  // lesson titles (the LLM often names topics after lesson content),
+  // then fall back to overlap with question-derived topics, then index.
+  const missedTopics: MissedTopic[] = topicNames.map((name: string, i: number) => {
+    if (courseId && lessons.length > 0) {
+      const direct = matchLessonForTopic(name, lessons);
+      if (direct) {
+        return { topic: name, review_link: `/courses/${courseId}/lessons/${direct.id}` };
       }
-      const nameTokens = tokenize(name);
-      let best: MissedTopic | null = null;
-      let bestScore = 0;
-      for (const l of reviewLinks) {
-        const score = overlapScore(nameTokens, tokenize(l.topic));
-        if (score > bestScore) {
-          bestScore = score;
-          best = l;
-        }
+    }
+    const nameTokens = tokenize(name);
+    let best: MissedTopic | null = null;
+    let bestScore = 0;
+    for (const l of reviewLinks) {
+      const score = overlapScore(nameTokens, tokenize(l.topic));
+      if (score > bestScore) {
+        bestScore = score;
+        best = l;
       }
-      if (best) return { topic: name, review_link: best.review_link };
-      // Fallback: use review link by index
-      if (i < reviewLinks.length) {
-        return { topic: name, review_link: reviewLinks[i].review_link };
-      }
-      return { topic: name, review_link: '' };
-    });
+    }
+    if (best) return { topic: name, review_link: best.review_link };
+    // Fallback: use review link by index
+    if (i < reviewLinks.length) {
+      return { topic: name, review_link: reviewLinks[i].review_link };
+    }
+    return { topic: name, review_link: '' };
+  });
 
-    return {
-      insight_text: insightText || 'Great effort! Keep up the good work.',
-      missed_topics: missedTopics,
-      tone_check: 'encouraging',
-      ai_status: 'generated',
-    };
-  } catch {
-    setAttr(insightSpan, 'parse_failed', 'json_error');
-    return {
-      insight_text: response.slice(0, 500) || 'Insights unavailable right now — check back shortly.',
-      missed_topics: [],
-      tone_check: 'encouraging',
-      ai_status: 'degraded',
-    };
-  }
+  return {
+    insight_text: insightText || 'Great effort! Keep up the good work.',
+    missed_topics: missedTopics,
+    tone_check: 'encouraging',
+    ai_status: 'generated',
+  };
 }
 
 // ════════════════════════════════════════════════════════
