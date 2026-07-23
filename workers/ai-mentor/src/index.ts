@@ -33,15 +33,6 @@ interface SkillGapResponse {
   ai_status: string;
 }
 
-// ──── Proficiency mapping (per spec level → catalog difficulty) ────
-
-const PROFICIENCY: Record<string, string> = {
-  beginner: 'beginner',
-  intermediate: 'intermediate',
-  advanced: 'advanced',
-  expert: 'advanced',
-};
-
 // ──── Difficulty → estimated hours ────
 
 const HOURS_BY_DIFFICULTY: Record<string, number> = {
@@ -161,11 +152,7 @@ async function handleSkillGap(
 
   // 5. Pre-compute gap data for the prompt
   const learnerSkillSet = new Set(profile.skills.map((s) => s.toLowerCase().trim()));
-  const completedTitles = new Set(
-    progress
-      .filter((p) => p.status === 'completed')
-      .map((p) => p.title.toLowerCase().trim()),
-  );
+  const completedTitles = completedTitleSet(progress);
   const inProgressTitles = new Set(
     progress
       .filter((p) => p.status === 'in_progress')
@@ -173,7 +160,6 @@ async function handleSkillGap(
   );
 
   // Collect all prerequisite skills from courses the learner hasn't finished
-  type GapEntry = { skill: string; courses: CatalogueCourse[] };
   const gapMap = new Map<string, CatalogueCourse[]>();
 
   for (const course of catalogue) {
@@ -199,18 +185,11 @@ async function handleSkillGap(
   }
 
   // Compute gap summary for prompt
-  const gapEntries = Array.from(gapMap.entries()).map(([skill, courses]) => {
-    const avgHours = courses.reduce((sum, c) => {
-      const diff = (c.difficulty || 'beginner').toLowerCase();
-      return sum + (HOURS_BY_DIFFICULTY[diff] || 10);
-    }, 0);
-    const estimatedHours = Math.round(avgHours / courses.length) || 10;
-    return {
-      skill,
-      courses_available: courses.length,
-      estimated_hours: estimatedHours,
-    };
-  });
+  const gapEntries = Array.from(gapMap.entries()).map(([skill, courses]) => ({
+    skill,
+    courses_available: courses.length,
+    estimated_hours: estimateHoursForCourses(courses),
+  }));
 
   setAttr(dataSpan, 'gaps_identified', gapEntries.length);
   setAttr(dataSpan, 'courses_relevant', catalogue.length);
@@ -287,12 +266,10 @@ function buildPrompt(
 
   // Show relevant courses for gaps
   const gapSkills = new Set(gaps.map((g) => g.skill));
-  const completedTitles = new Set(
-    progress.filter((p) => p.status === 'completed').map((p) => p.title.toLowerCase().trim()),
-  );
+  const completedSet = completedTitleSet(progress);
   const relevantCourses = catalogue.filter((c) => {
     const title = c.title?.toLowerCase().trim() || '';
-    if (completedTitles.has(title)) return false;
+    if (completedSet.has(title)) return false;
     return (c.prerequisites || []).some((p) => gapSkills.has(p.toLowerCase().trim()));
   });
   const courseLines = relevantCourses.slice(0, 10).map((c) =>
@@ -385,14 +362,9 @@ function parseGapAnalysis(
       const computedCourses = gapMap.get(skillLower);
       const coursesAvailable = computedCourses ? computedCourses.length : (g.courses_available || 0);
       // Compute estimated hours from actual matched courses
-      let estimatedHours = g.estimated_hours || 10;
-      if (computedCourses && computedCourses.length > 0) {
-        const totalHours = computedCourses.reduce((sum, c) => {
-          const diff = (c.difficulty || 'beginner').toLowerCase();
-          return sum + (HOURS_BY_DIFFICULTY[diff] || 10);
-        }, 0);
-        estimatedHours = Math.round(totalHours / computedCourses.length);
-      }
+      const estimatedHours = (computedCourses && computedCourses.length > 0)
+        ? estimateHoursForCourses(computedCourses)
+        : g.estimated_hours || 10;
       return {
         skill: g.skill || skillLower,
         current_level: g.current_level || 'none',
@@ -416,6 +388,33 @@ function parseGapAnalysis(
       ai_status: 'degraded',
     };
   }
+}
+
+// ════════════════════════════════════════════════════════
+//  Placeholder Response (degraded mode)
+// ════════════════════════════════════════════════════════
+
+// ════════════════════════════════════════════════════════
+//  Helpers
+// ════════════════════════════════════════════════════════
+
+/** Estimate average hours for a set of courses based on difficulty. */
+function estimateHoursForCourses(courses: CatalogueCourse[]): number {
+  if (courses.length === 0) return 10;
+  const totalHours = courses.reduce((sum, c) => {
+    const diff = (c.difficulty || 'beginner').toLowerCase();
+    return sum + (HOURS_BY_DIFFICULTY[diff] || 10);
+  }, 0);
+  return Math.round(totalHours / courses.length);
+}
+
+/** Build a set of completed course titles (lowercased) from progress entries. */
+function completedTitleSet(progress: ProgressEntry[]): Set<string> {
+  return new Set(
+    progress
+      .filter((p) => p.status === 'completed')
+      .map((p) => p.title.toLowerCase().trim()),
+  );
 }
 
 // ════════════════════════════════════════════════════════

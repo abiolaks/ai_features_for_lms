@@ -1,9 +1,5 @@
-import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
-import {
-  env,
-  createExecutionContext,
-  waitOnExecutionContext,
-} from 'cloudflare:test';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { env } from 'cloudflare:test';
 import { createMockGateway, spyOnSpans } from '../../shared/test-utils';
 import worker from '../src/index';
 
@@ -96,6 +92,7 @@ const MOCK_PROGRESS = {
 
 // ──── Helper ────
 
+/** Mock global fetch for LMS calls and return a mock gateway binding. */
 function setupFetch(mockProfile?: object, mockCatalog?: object, mockProgress?: object, mockGatewayResponse?: object) {
   const gateway = createMockGateway(mockGatewayResponse || DEFAULT_LLM_RESPONSE);
 
@@ -116,15 +113,7 @@ function setupFetch(mockProfile?: object, mockCatalog?: object, mockProgress?: o
     return Promise.resolve(new Response('{}', { status: 404 }));
   });
 
-  return new WorkerContext(gateway);
-};
-
-class WorkerContext {
-  gateway: ReturnType<typeof createMockGateway>;
-
-  constructor(gateway: ReturnType<typeof createMockGateway>) {
-    this.gateway = gateway;
-  }
+  return gateway;
 }
 
 // ════════════════════════════════════════════════════════
@@ -132,19 +121,19 @@ class WorkerContext {
 // ════════════════════════════════════════════════════════
 
 describe('ai-mentor /mentor/skill-gap', () => {
-  let ctx: WorkerContext;
+  let gateway: ReturnType<typeof createMockGateway>;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.resetAllMocks();
-    ctx = setupFetch();
+    gateway = setupFetch();
   });
 
   // ──── Validation ────
 
   it('returns 400 when learner_id is missing', async () => {
     const req = new Request('https://ai-mentor/mentor/skill-gap?org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(400);
     const body: any = await resp.json();
     expect(body.error).toContain('learner_id');
@@ -152,7 +141,7 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('returns 400 when org_id is missing', async () => {
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(400);
     const body: any = await resp.json();
     expect(body.error).toContain('org_id');
@@ -160,19 +149,19 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('returns 405 for POST', async () => {
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'POST' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(405);
   });
 
   it('returns 404 for unknown routes', async () => {
     const req = new Request('https://ai-mentor/unknown', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(404);
   });
 
   it('returns health check', async () => {
     const req = new Request('https://ai-mentor/health', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
     const body: any = await resp.json();
     expect(body.worker).toBe('ai-mentor');
@@ -182,7 +171,7 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('returns skill gaps with recommendations', async () => {
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
 
     const body: any = await resp.json();
@@ -207,7 +196,7 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('correctly computes courses_available from catalogue prerequisites', async () => {
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
 
     const body: any = await resp.json();
@@ -233,10 +222,10 @@ describe('ai-mentor /mentor/skill-gap', () => {
         gamification: { login_streak: 0, total_points: 0 },
       },
     };
-    ctx = setupFetch(emptyProfile, MOCK_CATALOG, MOCK_PROGRESS);
+    gateway = setupFetch(emptyProfile, MOCK_CATALOG, MOCK_PROGRESS);
 
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-2&org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
 
     const body: any = await resp.json();
@@ -266,9 +255,8 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('degrades gracefully when AI03 gateway fails', async () => {
     // Gateway returns null (unreachable)
-    const gateway = createMockGateway(null);
+    gateway = createMockGateway(null);
 
-    ctx = new WorkerContext(gateway);
     // Set up LMS mocks
     globalThis.fetch = vi.fn((input: RequestInfo | URL, _init?: RequestInit) => {
       const urlStr = typeof input === 'string' ? input
@@ -298,10 +286,10 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('degrades gracefully when catalog is empty', async () => {
     const emptyCatalog = { success: true, data: [] };
-    ctx = setupFetch(MOCK_PROFILE, emptyCatalog, MOCK_PROGRESS);
+    gateway = setupFetch(MOCK_PROFILE, emptyCatalog, MOCK_PROGRESS);
 
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
 
     const body: any = await resp.json();
@@ -316,7 +304,7 @@ describe('ai-mentor /mentor/skill-gap', () => {
     const { logs, spans } = spyOnSpans();
 
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'GET' });
-    await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
 
     const dataSpans = spans('data.fetch');
     expect(dataSpans.length).toBeGreaterThanOrEqual(1);
@@ -334,10 +322,10 @@ describe('ai-mentor /mentor/skill-gap', () => {
 
   it('excludes completed courses from recommendation candidates', async () => {
     // Python Design Patterns is completed — should not be recommended
-    ctx = setupFetch(MOCK_PROFILE, MOCK_CATALOG, MOCK_PROGRESS);
+    gateway = setupFetch(MOCK_PROFILE, MOCK_CATALOG, MOCK_PROGRESS);
 
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
 
     const body: any = await resp.json();
@@ -350,10 +338,10 @@ describe('ai-mentor /mentor/skill-gap', () => {
   // ──── Gap Computation ────
 
   it('identifies gaps from course prerequisites not in learner skills', async () => {
-    ctx = setupFetch(MOCK_PROFILE, MOCK_CATALOG, MOCK_PROGRESS);
+    gateway = setupFetch(MOCK_PROFILE, MOCK_CATALOG, MOCK_PROGRESS);
 
     const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'GET' });
-    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: ctx.gateway });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(200);
 
     const body: any = await resp.json();
