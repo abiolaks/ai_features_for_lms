@@ -89,7 +89,7 @@ export async function fetchProfile(
 export async function fetchCatalog(
   env: LmsEnv,
   orgId: string,
-  stub?: CatalogueCourse[],
+  stub?: Partial<CatalogueCourse>[],
 ): Promise<{ catalogue: CatalogueCourse[]; fromLms: boolean }> {
   try {
     let resp = await fetchLms(env, { path: `/api/v1/catalog?organization_id=${orgId}` });
@@ -140,7 +140,7 @@ function mapCatalogItem(c: any): CatalogueCourse {
 export async function fetchProgress(
   env: LmsEnv,
   learnerId: string,
-  stub?: ProgressEntry[],
+  stub?: Partial<ProgressEntry>[],
 ): Promise<{ progress: ProgressEntry[]; fromLms: boolean }> {
   try {
     const resp = await fetchLms(env, { path: `/api/v1/progress/user?userId=${learnerId}` });

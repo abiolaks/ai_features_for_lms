@@ -19,7 +19,7 @@
 import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
-import { fetchProfile, fetchCatalog, fetchProgress, type LearnerProfile as LmsLearnerProfile, type CatalogueCourse as LmsCatalogueCourse, type ProgressEntry as LmsProgressEntry } from "../../shared/lms-data";
+import { fetchProfile, fetchCatalog, fetchProgress, type LearnerProfile, type CatalogueCourse, type ProgressEntry } from "../../shared/lms-data";
 import { callGateway } from "../../shared/gateway";
 import type { BaseEnv } from "../../shared/env";
 
@@ -39,28 +39,10 @@ const PREREQ_BOOST = 15;
 
 // ──── Types ────
 
-interface LearnerProfile {
-  skills?: string[];
-  goals?: string;
-  experience_level?: string;
-  interests?: string[];
-  streak_days?: number;
-  points?: number;
-}
-
-interface CatalogueCourse {
-  id?: string;
-  title: string;
-  difficulty?: string;
-  category?: string;
-  prerequisites?: string[];
-}
-
-interface ProgressEntry {
-  title: string;
-  status: "completed" | "in_progress";
-  progress_pct?: number;
-}
+/** Stub types accept partial data for offline/degraded mode. */
+type StubProfile = Partial<LearnerProfile>;
+type StubCourse = Partial<CatalogueCourse>;
+type StubProgress = Partial<ProgressEntry>;
 
 interface LmsRec {
   course_id?: string;
@@ -83,9 +65,9 @@ interface RecRequest {
   course_id?: string;
   refresh?: boolean;
   // ── Stub mode: provide data directly when LMS is unavailable ──
-  profile?: LearnerProfile;
-  catalogue?: CatalogueCourse[];
-  progress?: ProgressEntry[];
+  profile?: StubProfile;
+  catalogue?: StubCourse[];
+  progress?: StubProgress[];
   lms_recommendations?: LmsRec[];
 }
 

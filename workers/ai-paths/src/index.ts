@@ -10,7 +10,7 @@
 import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
 import { startSpan, setAttr, endSpan } from "../../shared/observability";
-import { fetchProfile, fetchCatalog, fetchProgress } from "../../shared/lms-data";
+import { fetchProfile, fetchCatalog, fetchProgress, type LearnerProfile, type CatalogueCourse, type ProgressEntry } from "../../shared/lms-data";
 import { callGateway } from "../../shared/gateway";
 import { parseLlmJson } from "../../shared/llm-parser";
 import type { BaseEnv } from "../../shared/env";
@@ -19,35 +19,18 @@ export interface Env extends BaseEnv {}
 
 // ──── Types ────
 
-interface LearnerProfile {
-  skills?: string[];
-  goals?: string;
-  experience_level?: string;
-  interests?: string[];
-  streak_days?: number;
-  points?: number;
-}
-
-interface CatalogueCourse {
-  title: string;
-  difficulty?: string;
-  category?: string;
-  prerequisites?: string[];
-}
-
-interface ProgressEntry {
-  title: string;
-  status: "completed" | "in_progress";
-  progress_pct?: number;
-}
+/** Stub types accept partial data for offline/degraded mode. */
+type StubProfile = Partial<LearnerProfile>;
+type StubCourse = Partial<CatalogueCourse>;
+type StubProgress = Partial<ProgressEntry>;
 
 interface PathRequest {
   learner_id: string;
   org_id: string;
-  // ── Stub mode: provide data directly until LMS APIs exist ──
-  profile?: LearnerProfile;
-  catalogue?: CatalogueCourse[];
-  progress?: ProgressEntry[];
+  // ── Stub mode: provide data directly when LMS is unavailable ──
+  profile?: StubProfile;
+  catalogue?: StubCourse[];
+  progress?: StubProgress[];
 }
 
 interface PathCourse {
