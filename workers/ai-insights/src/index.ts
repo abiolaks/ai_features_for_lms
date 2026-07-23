@@ -449,7 +449,7 @@ function parseInsight(
   const parsed = parseLlmJson<{ insight?: string; response?: string; insight_text?: string; missed_topics?: string[]; topics?: string[] }>(response);
 
   if (!parsed) {
-    setAttr(insightSpan, 'parse_failed', true);
+    setAttr(insightSpan, 'parse_failed', response.includes('{') ? 'json_error' : 'no_json');
     return {
       insight_text: response.slice(0, 500) || 'Insights unavailable right now — check back shortly.',
       missed_topics: [],
