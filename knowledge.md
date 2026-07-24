@@ -1,3 +1,148 @@
+## 2026-07-24 — Session: F04a/F04b LMS Endpoint Spec — Draft for Backend Team
+
+### Context
+
+F04a (Bottleneck Detection) and F04b (Engagement Monitoring) need aggregate org-level data from the LMS. Current endpoints are all per-user or per-attempt — pulling every learner individually doesn't scale. We need two new admin aggregate endpoints.
+
+### Key gap discovered
+
+- LMS has `/v1/admin/overall-progress` (org totals), `/v1/admin/enrollment-management/enrollments` (per-enrollment), `/v1/progress/user?userId=` (per-user), `/v1/learner/assessments/attempts/{id}` (per-attempt)
+- None provide **per-module aggregate** data across the org
+- The issue doc says `/api/v1/progress/user (aggregate)` but the actual endpoint is per-user — this was aspirational, not real
+
+### Decision: Two new LMS endpoints (Option A — build worker with stub data, swap when real endpoint ready)
+
+#### Endpoint A: Module Bottleneck Data (F04a)
+
+```
+GET /api/v1/admin/analytics/module-bottlenecks?period=last_90_days
+Header: X-API-Key: <LMS_INTERNAL_KEY>
+```
+
+Response shape:
+```json
+{
+  "success": true,
+  "data": {
+    "cohort_size": 45,
+    "period_days": 90,
+    "modules": [{
+      "module_id": "uuid",
+      "module_title": "Variables and Data Types",
+      "course_id": "uuid",
+      "course_title": "Python Basics",
+      "expected_duration_hours": 2.0,
+      "completion_stats": {
+        "learner_count": 45,
+        "median_completion_time_hours": 5.3,
+        "p25_completion_time_hours": 3.1,
+        "p75_completion_time_hours": 8.7
+      },
+      "quiz_stats": {
+        "assessment_id": "uuid",
+        "assessment_title": "Variables Quiz",
+        "learner_count": 42,
+        "median_score_percent": 62,
+        "pass_rate_percent": 58,
+        "average_attempts": 1.8
+      }
+    }],
+    "prerequisite_chains": [{
+      "course_id": "uuid",
+      "course_title": "Data Science Fundamentals",
+      "prerequisite_course_id": "uuid",
+      "prerequisite_title": "Python Basics",
+      "learners_who_took_both": 28,
+      "prereq_pass_rate_percent": 85
+    }]
+  }
+}
+```
+
+Query params: `period` = `last_30_days`, `last_90_days` (default), `last_180_days`, `last_365_days`
+
+Constraints:
+- cohort_size < 10 → return empty arrays (suppress noise)
+- learner_count < 5 in any stat → null out that stat (anonymity floor)
+- No individual learner data ever exposed
+
+#### Endpoint B: Engagement Data (F04b)
+
+```
+GET /api/v1/admin/analytics/engagement-data?period=last_30_days
+Header: X-API-Key: <LMS_INTERNAL_KEY>
+```
+
+Response shape:
+```json
+{
+  "success": true,
+  "data": {
+    "cohort_size": 45,
+    "period_days": 30,
+    "video_completion": {
+      "by_duration_bucket": [
+        { "bucket": "0-5 min", "completion_rate_percent": 92, "video_count": 12, "total_views": 540 },
+        { "bucket": "5-15 min", "completion_rate_percent": 71, "video_count": 8, "total_views": 320 },
+        { "bucket": "15-30 min", "completion_rate_percent": 42, "video_count": 3, "total_views": 95 },
+        { "bucket": "30+ min", "completion_rate_percent": 18, "video_count": 1, "total_views": 22 }
+      ],
+      "drop_off_videos": [{
+        "video_title": "Advanced Python OOP",
+        "duration_seconds": 1200,
+        "median_drop_off_seconds": 850,
+        "completion_rate_percent": 38,
+        "total_views": 45
+      }]
+    },
+    "course_stalls": {
+      "overall_stall_rate_percent": 22,
+      "stalled_modules": [{
+        "module_title": "Inheritance and Polymorphism",
+        "course_title": "Advanced Python",
+        "stall_rate_percent": 48,
+        "enrolled_count": 30,
+        "stalled_count": 14,
+        "avg_progress_percent": 34
+      }]
+    },
+    "activity_patterns": {
+      "by_day_of_week": [
+        { "day": "Monday", "active_learner_percent": 78 },
+        { "day": "Tuesday", "active_learner_percent": 72 }
+      ],
+      "by_hour_of_day": [
+        { "hour": 9, "active_learner_percent": 45 },
+        { "hour": 14, "active_learner_percent": 62 }
+      ]
+    }
+  }
+}
+```
+
+Definitions:
+- completion_rate_percent = views reaching ≥90% of video duration ÷ total views
+- stall_rate_percent = learners enrolled but no activity in last 14 days ÷ total enrolled
+- active_learner_percent = learners with ≥1 activity on that day/hour ÷ total active cohort
+- median_drop_off_seconds = median watch time across all views that didn't complete
+
+Duration buckets: `0-5 min`, `5-15 min`, `15-30 min`, `30+ min`
+
+Same anonymity constraints as Endpoint A.
+
+### Plan
+
+1. Build F04a worker now with stub aggregate data → deploy, tests pass
+2. Send endpoint specs to LMS backend team
+3. When real endpoint is live, swap stub → real fetch (one-line change)
+4. Repeat for F04b
+
+### Draft message stored
+
+Full draft message for LMS backend team is above — copy-paste ready. Two endpoints vs merged endpoint left for them to decide.
+
+---
+
 ## 2026-07-13 — Session: Demo Questions, expand_scope, LMS Payload Template
 
 ### Tested Demo Questions (All Working)
