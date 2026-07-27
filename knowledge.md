@@ -1130,3 +1130,124 @@ Dashboard verification: Workers & Pages → ai-indexing (invocations), AI → AI
 ### Cleared
 - `workers/pdf-extractor/` — deleted. PDF extraction handled inside ai-indexing via `unpdf`.
 - `Issues/platform/` — deleted. LMS is external, all interactions via `api.json`.
+
+---
+
+## 2026-07-24 — Session: F03b Session Prep Insights — Readiness Assessment
+
+### What F03b Does
+
+`POST /mentor/session-prep` generates a structured session agenda for mentors before meeting learners. Returns a "cheat sheet" with:
+- **recent_activity**: completed lessons, quiz scores (avg + lowest topic), stalled modules
+- **suggested_agenda**: 3 topics prioritized by urgency, each with reason + suggested duration (minutes)
+- **prep_materials**: links to specific lessons the mentor can pull up during the session
+
+### Data Flow
+
+```
+POST /mentor/session-prep { learner_id, org_id }
+         │
+         ├─► GET /v1/learner/activity-summary
+         │   → completed_lessons count
+         │
+         ├─► GET /v1/progress/user?userId=
+         │   → stalled_modules (status=enrolled + progressPercent < 50)
+         │
+         ├─► GET /v1/learner/preferences
+         │   → learning_goal, knownSkills (agenda context)
+         │
+         ├─► GET /v1/learner/assessments?userId=  ← DOES NOT EXIST YET
+         │   → quiz_scores.avg, quiz_scores.lowest_topic
+         │
+         ├─► GET /v1/courses/{courseId}/modules → /v1/modules/{id}/lessons
+         │   → prep_materials lesson links
+         │
+         ├─► Build prompt → AI03 Gateway (standard tier)
+         │   → suggested_agenda: [{ topic, reason, duration_min }]
+         │
+         └─► Response
+```
+
+### What's Already in Place
+
+| Asset | Status |
+|-------|--------|
+| ai-mentor worker directory | Exists — package.json, tsconfig, vitest config, wrangler.jsonc with `AI_GATEWAY` service binding |
+| AI03 LLM Gateway | Service binding configured, working in `/mentor/skill-gap` |
+| Shared modules | gateway.ts, fetch-lms.ts, cors.ts, observability.ts, llm-parser.ts, test-utils.ts, lms-data.ts (fetchProfile, fetchCatalog, fetchProgress) |
+| Test infrastructure | vitest + cloudflare:test, createMockGateway, spyOnSpans, createLlmResponse |
+| Reference pattern | `/mentor/skill-gap` — fetch→prompt→gateway→parse, degraded mode, obs spans, full test suite |
+| `/v1/learner/activity-summary` | Exists in api.json — lessons_completed, courses_in_progress, total_time_spent |
+| `/v1/learner/preferences` | Exists in api.json — knownSkills, learningGoal, skillLevel, interests |
+| `/v1/courses/{courseId}/modules` | Exists in api.json — bridge from stalled course → modules → lessons |
+| `/v1/modules/{moduleId}/lessons` | Exists in api.json — lesson list for prep material links |
+
+### What We Can Build Today (~80%)
+
+Everything except quiz scores. The agenda uses:
+- Stalled modules from progress data
+- Skill gaps from preferences vs catalog
+- Learner goals for topic alignment
+
+Response shape without quiz data:
+```json
+{
+  "recent_activity": {
+    "completed_lessons": 12,
+    "quiz_scores": null,
+    "stalled_modules": ["advanced-algorithms"]
+  },
+  "suggested_agenda": [
+    { "topic": "Advanced Algorithms progress check", "reason": "Stalled at 12% — identify blockers", "duration_min": 15 },
+    { "topic": "Skill gap: distributed computing", "reason": "Required by 3 courses in your path", "duration_min": 20 },
+    { "topic": "Next steps toward Data Engineer goal", "reason": "Align course selection with learning goal", "duration_min": 10 }
+  ],
+  "prep_materials": [
+    { "lesson_title": "Algorithm Complexity", "link": "/courses/cs201/lessons/complexity" }
+  ],
+  "ai_status": "partial"
+}
+```
+
+### What's Blocked — LMS Endpoint Gap
+
+**Single missing endpoint:** `GET /v1/learner/assessments?userId=<id>&status=completed&limit=5`
+
+This doesn't exist in `api.json`. The closest matches:
+- `GET /v1/learner/assessments/{id}/attempts` — lists attempts for a specific assessment (need assessment ID first)
+- `GET /v1/learner/assessments/attempts/{attemptId}` — single attempt by ID
+- `GET /v1/learner/assessments` — POST only (starts a new assessment, no GET)
+
+Without this, we can't compute `quiz_scores.avg` or `quiz_scores.lowest_topic`. The agenda can't prioritize by quiz urgency as the AC requires.
+
+**Requested endpoint shape:**
+```
+GET /v1/learner/assessments?userId=<id>&status=completed&sort=completed_at:desc&limit=5
+Header: X-API-Key: <LMS_INTERNAL_KEY>
+
+Response:
+{
+  "success": true,
+  "data": [
+    {
+      "id": "019f121f-...",
+      "title": "Recursion Basics Quiz",
+      "courseId": "019f0513-...",
+      "moduleId": "019f121d-...",
+      "scorePercent": 45,
+      "totalQuestions": 5,
+      "correctAnswers": 2,
+      "status": "completed",
+      "completedAt": "2026-07-23T14:30:00Z"
+    }
+  ]
+}
+```
+
+### Secondary gap: `/v1/learner/profile?userId=`
+
+`GET /v1/learner/profile` has no query params in api.json — it resolves the learner from auth context. But AI workers call with a service-level `LMS_INTERNAL_KEY`, not per-user credentials. Workaround: use `/v1/learner/preferences` + `/v1/progress/user?userId=` instead.
+
+### Decision
+
+**Build now, ship with `ai_status: "partial"` and `quiz_scores: null`.** The agenda is still useful — stalled modules + skill gaps + goal alignment give a mentor plenty to work with. When the LMS team adds the assessments listing endpoint, it's a non-breaking enrichment: `quiz_scores` fills in, agenda items get score-based urgency, `ai_status` flips to `"generated"`.
