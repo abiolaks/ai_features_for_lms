@@ -9,7 +9,7 @@
 
 import { fetchLms } from "../../shared/fetch-lms";
 import { json, handleCors } from "../../shared/cors";
-import { startSpan, setAttr, endSpan } from "../../shared/observability";
+import { startSpan, setAttr, endSpan, type SpanContext } from "../../shared/observability";
 import { fetchProfile, fetchCatalog, fetchProgress, type LearnerProfile, type CatalogueCourse, type ProgressEntry } from "../../shared/lms-data";
 import { callGateway } from "../../shared/gateway";
 import { parseLlmJson } from "../../shared/llm-parser";
