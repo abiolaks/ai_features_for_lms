@@ -40,7 +40,7 @@ interface IndexRequest {
     course_id?: string;
     module_id?: string;
     durationSeconds?: number;
-    content?: string;
+    content?: string | string[];
     description?: string;
     tags?: string[];
   };
@@ -104,6 +104,63 @@ async function fetchStreamVTT(
 
 const CHUNK_SIZE = 2000; // chars per chunk
 
+// ──── Structured content chunking ────
+// Each raw chunk represents a logical unit: a page, a slide, or flat text.
+
+interface RawChunk {
+  text: string;
+  pageNumber?: number;
+  slideNumber?: number;
+}
+
+interface StructuredChunk {
+  text: string;
+  source_type: string;
+  page_start?: number;
+  page_end?: number;
+  slide_number?: number;
+}
+
+function chunkContent(rawChunks: RawChunk[], sourceType: string): StructuredChunk[] {
+  const result: StructuredChunk[] = [];
+  for (const raw of rawChunks) {
+    if (raw.text.length <= CHUNK_SIZE) {
+      result.push({
+        text: raw.text,
+        source_type: sourceType,
+        page_start: raw.pageNumber,
+        page_end: raw.pageNumber,
+        slide_number: raw.slideNumber,
+      });
+    } else {
+      // Split large chunks while preserving page/slide attribution
+      let start = 0;
+      while (start < raw.text.length) {
+        let end = start + CHUNK_SIZE;
+        if (end < raw.text.length) {
+          const period = raw.text.lastIndexOf(". ", end);
+          const newline = raw.text.lastIndexOf("\n", end);
+          const space = raw.text.lastIndexOf(" ", end);
+          const breakpoint = Math.max(period, newline, space);
+          if (breakpoint > start + CHUNK_SIZE / 2) {
+            end = breakpoint + 1;
+          }
+        }
+        result.push({
+          text: raw.text.substring(start, end).trim(),
+          source_type: sourceType,
+          page_start: raw.pageNumber,
+          page_end: raw.pageNumber,
+          slide_number: raw.slideNumber,
+        });
+        start = end;
+      }
+    }
+  }
+  return result;
+}
+
+// Legacy wrapper — for video transcripts (flat text, no page/slide)
 function chunkText(text: string): string[] {
   if (text.length <= CHUNK_SIZE) return [text];
   const chunks: string[] = [];
@@ -131,7 +188,8 @@ async function embedAndUpsert(
   org_id: string,
   entity: IndexRequest["entity"],
   content: string,
-  transcriptSource: string
+  transcriptSource: string,
+  structuredChunks?: StructuredChunk[]
 ): Promise<{ chunks: number; content_length: number }> {
   // 0. Clean up old vectors (pre-chunking: single ID, or previous chunks)
   try {
@@ -148,30 +206,57 @@ async function embedAndUpsert(
     // Pre-cleanup is best-effort; upsert will still work
   }
 
-  const chunks = chunkText(content);
+  const sourceType = entity.contentType || "unknown";
+
+  // Use structured chunks if provided, otherwise fall back to flat chunking
+  let chunks: StructuredChunk[];
+  if (structuredChunks) {
+    chunks = structuredChunks;
+  } else {
+    // Legacy: flat text → wrap as structured chunks without page/slide
+    const flatChunks = chunkText(content);
+    chunks = flatChunks.map((text) => ({
+      text,
+      source_type: sourceType,
+      // No page/slide for flat (video) content
+    }));
+  }
+
   const vectors: { id: string; values: number[]; metadata: Record<string, any> }[] = [];
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
-    const result = await env.AI.run(EMBEDDING_MODEL, { text: chunk });
+    const result = await env.AI.run(EMBEDDING_MODEL, { text: chunk.text });
     const vector: number[] = Array.isArray(result) ? result : result?.data?.[0] ?? result;
+
+    const metadata: Record<string, any> = {
+      title: entity.title,
+      lesson_id: entity.id,
+      course_id: entity.course_id || "",
+      module_id: entity.module_id || "",
+      org_id,
+      content_type: sourceType,
+      source_type: sourceType,
+      duration_seconds: entity.durationSeconds || 0,
+      transcript_source: transcriptSource,
+      chunk_index: i,
+      total_chunks: chunks.length,
+      content: chunk.text,
+    };
+
+    // Attach page/slide location if present
+    if (chunk.page_start !== undefined) {
+      metadata.page_start = chunk.page_start;
+      metadata.page_end = chunk.page_end;
+    }
+    if (chunk.slide_number !== undefined) {
+      metadata.slide_number = chunk.slide_number;
+    }
 
     vectors.push({
       id: `lesson-${entity.id}-chunk${i}`,
       values: vector,
-      metadata: {
-        title: entity.title,
-        lesson_id: entity.id,
-        course_id: entity.course_id || "",
-        module_id: entity.module_id || "",
-        org_id,
-        content_type: entity.contentType || "unknown",
-        duration_seconds: entity.durationSeconds || 0,
-        transcript_source: transcriptSource,
-        chunk_index: i,
-        total_chunks: chunks.length,
-        content: chunk,
-      },
+      metadata,
     });
   }
 
@@ -479,17 +564,14 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
     const pdfBytes = await pdfObj.arrayBuffer();
     
     // 2. Extract text based on file type
-    let fullText: string;
+    let fullText: string | string[];
     const key = body.r2Key.toLowerCase();
     
     if (key.endsWith(".pdf")) {
-      fullText = await extractTextFromPdfBufferAsync(pdfBytes);
-      // Fallback: if unpdf produced nothing, try regex
-      if (!fullText || fullText.trim().length < 10) {
-        fullText = extractTextFromPdfBuffer(pdfBytes);
-      }
+      // Per-page extraction: preserve page boundaries for citations
+      fullText = await extractTextFromPdfBufferPerPage(pdfBytes);
     } else if (key.endsWith(".pptx") || key.endsWith(".ppt")) {
-      fullText = extractTextFromPptxBuffer(pdfBytes);
+      fullText = extractTextFromPptxBuffer(pdfBytes);  // returns string[]
     } else if (key.endsWith(".txt") || key.endsWith(".md")) {
       fullText = decoder.decode(new Uint8Array(pdfBytes));
     } else {
@@ -497,7 +579,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
       fullText = decoder.decode(new Uint8Array(pdfBytes));
     }
 
-    if (!fullText || fullText.trim().length < 10) {
+    const fullTextStr = Array.isArray(fullText) ? fullText.join(" ") : fullText;
+    if (!fullTextStr || fullTextStr.trim().length < 10) {
       return Response.json({
         error: "no_extractable_text",
         key: body.r2Key,
@@ -505,9 +588,10 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
       }, { status: 422 });
     }
 
-    console.log(`[extract-pdf] ${body.title}: ${fullText.length} chars from "${body.r2Key}"`);
+    console.log(`[extract-pdf] ${body.title}: ${fullTextStr.length} chars from "${body.r2Key}"`);
 
     // 3. Queue for indexing (same pipeline as videos)
+    // For PDF: send per-page text array so chunking preserves page numbers
     await env.INDEXING_QUEUE.send({
       event: "publish",
       org_id: body.org_id,
@@ -515,8 +599,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
         id: body.lesson_id,
         title: body.title,
         contentType: key.endsWith(".pptx") ? "ppt" : "pdf",
-        content: fullText,
-        durationSeconds: fullText.length,
+        content: Array.isArray(fullText) ? fullText : fullTextStr,
+        durationSeconds: fullTextStr.length,
         course_id: body.course_id || "",
         module_id: body.module_id || "",
       },
@@ -524,8 +608,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
 
     return Response.json({
       status: "queued",
-      chars: fullText.length,
-      message: `Extracted ${fullText.length} chars, queued for indexing`,
+      chars: fullTextStr.length,
+      message: `Extracted ${fullTextStr.length} chars, queued for indexing`,
     }, { status: 202 });
 
   } catch (err: any) {
@@ -544,6 +628,21 @@ async function extractTextFromPdfBufferAsync(buffer: ArrayBuffer): Promise<strin
   } catch (err: any) {
     console.error(`unpdf extraction failed: ${err.message}`);
     return "";
+  }
+}
+
+/** Extract text from PDF per-page — preserves page boundaries for citations. */
+async function extractTextFromPdfBufferPerPage(buffer: ArrayBuffer): Promise<string[]> {
+  try {
+    const { extractText, getDocumentProxy } = await import("unpdf");
+    const pdf = await getDocumentProxy(new Uint8Array(buffer));
+    const { text } = await extractText(pdf, { mergePages: false });
+    return Array.isArray(text) ? text : [text];
+  } catch (err: any) {
+    console.error(`unpdf per-page extraction failed: ${err.message}`);
+    // Fallback to merged and wrap as single page
+    const merged = await extractTextFromPdfBufferAsync(buffer);
+    return merged ? [merged] : [];
   }
 }
 
@@ -611,27 +710,46 @@ function extractTextFromPdfBuffer(buffer: ArrayBuffer): string {
 }
 
 /** Best-effort text extraction from PPTX buffer. */
-function extractTextFromPptxBuffer(buffer: ArrayBuffer): string {
-  // PPTX is a ZIP file containing XML. Extract text from XML.
+function extractTextFromPptxBuffer(buffer: ArrayBuffer): string[] {
+  // PPTX is a ZIP file containing XML per slide.
+  // Split on XML declaration boundaries to isolate slide text.
   const bytes = new Uint8Array(buffer);
   const text = decoder.decode(bytes);
 
-  // PPTX stores text in <a:t> elements
-  const textPattern = /<a:t[^>]*>([^<]*)<\/a:t>/g;
-  const fragments: string[] = [];
-  let match;
-  while ((match = textPattern.exec(text)) !== null) {
-    if (match[1].trim()) fragments.push(match[1].trim());
+  // Each slide XML starts with its own <?xml declaration
+  const slideBlocks = text.split(/<\?xml/).filter(b => b.includes("<p:sld"));
+
+  if (slideBlocks.length === 0) {
+    // Fallback: no slide XML found, treat as flat
+    const textPattern = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+    const fragments: string[] = [];
+    let match;
+    while ((match = textPattern.exec(text)) !== null) {
+      if (match[1].trim()) fragments.push(match[1].trim());
+    }
+    return fragments.length > 0 ? [fragments.join(" ")] : [];
   }
 
-  return fragments.join(" ");
+  const slides: string[] = [];
+  for (const block of slideBlocks) {
+    const textPattern = /<a:t[^>]*>([^<]*)<\/a:t>/g;
+    const fragments: string[] = [];
+    let match;
+    while ((match = textPattern.exec(block)) !== null) {
+      if (match[1].trim()) fragments.push(match[1].trim());
+    }
+    if (fragments.length > 0) {
+      slides.push(fragments.join(" "));
+    }
+  }
+  return slides;
 }
 
 // ════════════════════════════════════════════════════════
 //  POST /index — Publish handler
 // ════════════════════════════════════════════════════════
 
-async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
+export async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
   // ── LMS_INTEGRATION: Webhook verification ──
   // TODO: When the LMS is live, verify the webhook signature here.
   // The LMS will send an X-Webhook-Signature header with each request.
@@ -674,10 +792,37 @@ async function handleIndex(body: IndexRequest, env: Env): Promise<Response> {
     return handleVideoIndex(enrichedEntity, org_id, env);
   }
 
-  // ── Text lesson — use extracted content if provided ──
+  // ── Text/PDF/PPT lesson — use extracted content if provided ──
   const content = enrichedEntity.content || buildMetadataContent(enrichedEntity);
+  const contentType = enrichedEntity.contentType || "text";
+
+  // Build structured chunks if content type supports page/slide tracking
+  let structuredChunks: StructuredChunk[] | undefined;
+  if (contentType === "pdf" && enrichedEntity.content) {
+    // PDF content: if pre-extracted per-page via unpdf (array of page texts),
+    // use that. Otherwise treat single text blob as one page.
+    const pages = typeof enrichedEntity.content === "string"
+      ? [enrichedEntity.content]
+      : (Array.isArray(enrichedEntity.content) ? enrichedEntity.content : [enrichedEntity.content]);
+    const rawChunks: RawChunk[] = pages.map((pageText: string, idx: number) => ({
+      text: String(pageText),
+      pageNumber: idx + 1,
+    }));
+    structuredChunks = chunkContent(rawChunks, "pdf");
+  } else if (contentType === "ppt" && enrichedEntity.content) {
+    // PPT content: split by slide marker
+    const slideTexts = String(enrichedEntity.content).split("---SLIDE---");
+    const rawChunks: RawChunk[] = slideTexts.map((slideText: string, idx: number) => ({
+      text: slideText.trim(),
+      slideNumber: idx + 1,
+    }));
+    structuredChunks = chunkContent(rawChunks, "ppt");
+  }
+
   try {
-    const { chunks, content_length } = await embedAndUpsert(env, org_id, enrichedEntity, content, "none");
+    const { chunks, content_length } = await embedAndUpsert(
+      env, org_id, enrichedEntity, String(content), "none", structuredChunks
+    );
     return Response.json({ status: "indexed", transcript_source: "none", content_length, chunks });
   } catch (err: any) {
     return Response.json({ error: `Indexing failed: ${err.message}` }, { status: 500 });

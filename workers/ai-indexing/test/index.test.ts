@@ -4,7 +4,7 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
 } from 'cloudflare:test';
-import worker, { extractTextFromVTT } from '../src/index';
+import worker, { extractTextFromVTT, handleIndex } from '../src/index';
 
 // ──── Mock Stream + AI + Vectorize bindings ────
 
@@ -215,6 +215,110 @@ describe('POST /index — text lesson', () => {
     expect(res.status).toBe(202);
     const body: any = await res.json();
     expect(body.status).toBe('queued');
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  Content-aware chunking — page/slide tracking
+// ════════════════════════════════════════════════════════
+
+describe('Content-aware chunking', () => {
+  it('stores source_type + page metadata for PDF content', async () => {
+    const upsertSpy = (env as any).VECTORIZE_INDEX.upsert;
+    upsertSpy.mockClear();
+
+    const res = await handleIndex({
+      event: 'publish',
+      org_id: 'org-test',
+      entity: {
+        id: 'lesson-pdf-1',
+        title: 'Python Guide',
+        contentType: 'pdf',
+        content: 'Page one content here.',
+        course_id: 'course-1',
+        page_count: 1,
+      },
+    }, env as any);
+
+    expect(res.status).toBe(200);
+    const calls = upsertSpy.mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    const allVectors = calls.flatMap((call: any) => call[0]);
+    expect(allVectors.length).toBeGreaterThan(0);
+    for (const v of allVectors) {
+      expect(v.metadata.source_type).toBe('pdf');
+      expect(v.metadata.page_start).toBeGreaterThanOrEqual(1);
+      expect(v.metadata.page_end).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('stores source_type + slide metadata for PPT content', async () => {
+    const upsertSpy = (env as any).VECTORIZE_INDEX.upsert;
+    upsertSpy.mockClear();
+
+    const res = await handleIndex({
+      event: 'publish',
+      org_id: 'org-test',
+      entity: {
+        id: 'lesson-ppt-1',
+        title: 'Intro Slides',
+        contentType: 'ppt',
+        content: 'Slide 1 content here for testing.',
+        course_id: 'course-1',
+      },
+    }, env as any);
+
+    expect(res.status).toBe(200);
+    const calls = upsertSpy.mock.calls;
+    const allVectors = calls.flatMap((call: any) => call[0]);
+    expect(allVectors.length).toBeGreaterThan(0);
+    for (const v of allVectors) {
+      expect(v.metadata.source_type).toBe('ppt');
+      expect(v.metadata.slide_number).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it('stores source_type video with no page/slide for video content', async () => {
+    const upsertSpy = (env as any).VECTORIZE_INDEX.upsert;
+    upsertSpy.mockClear();
+
+    // Mock video caption fetch
+    (env as any).STREAM.video = vi.fn().mockReturnValue({
+      captions: {
+        list: vi.fn().mockResolvedValue([
+          { language: 'en', status: 'ready' },
+        ]),
+        generate: vi.fn(),
+      },
+    });
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      new Response('WEBVTT\n\n00:00:00.000 --> 00:00:05.000\nHello world.', { status: 200 })
+    );
+
+    const res = await handleIndex({
+      event: 'publish',
+      org_id: 'org-test',
+      entity: {
+        id: 'lesson-vid-page',
+        title: 'Video Lesson',
+        contentType: 'video',
+        cloudflareVideoId: 'abc123',
+        streamStatus: 'ready',
+        course_id: 'course-1',
+      },
+    }, env as any);
+
+    expect(res.status).toBe(200);
+    const calls = upsertSpy.mock.calls;
+    const allVectors = calls.flatMap((call: any) => call[0]);
+    if (allVectors.length > 0) {
+      for (const v of allVectors) {
+        expect(v.metadata.source_type).toBe('video');
+        expect(v.metadata.page_start).toBeUndefined();
+        expect(v.metadata.slide_number).toBeUndefined();
+      }
+    }
+    vi.restoreAllMocks();
   });
 });
 

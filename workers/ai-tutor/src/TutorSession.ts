@@ -31,6 +31,8 @@ interface Citation {
   lesson_title: string;
   excerpt: string;
   score: number;
+  source_type?: string;
+  location?: string | null;
 }
 
 interface MessageRow {
@@ -319,11 +321,24 @@ export class TutorSession extends DurableObject<Env> {
     // After filtering, limit to top 15 by score (fetched 50 to give filter more candidates)
     const topMatches = matches.sort((a: any, b: any) => b.score - a.score).slice(0, 15);
 
-    const citations: Citation[] = topMatches.map((m: any) => ({
-      lesson_title: m.metadata?.title || "Untitled",
-      excerpt: (m.metadata?.content || "").substring(0, EXCERPT_MAX_LEN),
-      score: m.score,
-    }));
+    const citations: Citation[] = topMatches.map((m: any) => {
+      const sourceType = m.metadata?.source_type;
+      let location: string | null = null;
+      if (sourceType === "pdf" && m.metadata?.page_start) {
+        const start = m.metadata.page_start;
+        const end = m.metadata.page_end;
+        location = start === end ? `Page ${start}` : `Pages ${start}–${end}`;
+      } else if (sourceType === "ppt" && m.metadata?.slide_number) {
+        location = `Slide ${m.metadata.slide_number}`;
+      }
+      return {
+        lesson_title: m.metadata?.title || "Untitled",
+        excerpt: (m.metadata?.content || "").substring(0, EXCERPT_MAX_LEN),
+        score: m.score,
+        source_type: sourceType || undefined,
+        location,
+      };
+    });
 
     const prompt = buildPrompt(history, citations, body.question);
     return { prompt, citations };
@@ -426,7 +441,10 @@ function buildPrompt(history: MessageRow[], citations: Citation[], question: str
   
   // ── Course content ──
   const contentBlocks = citations
-    .map((c) => `[Lesson: ${c.lesson_title}]\n${c.excerpt}`)
+    .map((c) => {
+      const location = c.location ? `, ${c.location}` : "";
+      return `[${c.lesson_title}${location}]\n${c.excerpt}`;
+    })
     .join("\n\n");
   parts.push("COURSE CONTENT:", contentBlocks, "");
   

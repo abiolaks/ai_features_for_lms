@@ -109,14 +109,30 @@ beforeAll(() => {
               });
             }
 
-            const citations = matches.map((m: any) => ({
-              lesson_title: m.metadata?.title || "Untitled",
-              excerpt: (m.metadata?.content || "").substring(0, 2000),
-              score: m.score,
-            }));
+            const citations = matches.map((m: any) => {
+              const sourceType = m.metadata?.source_type;
+              let location: string | null = null;
+              if (sourceType === "pdf" && m.metadata?.page_start) {
+                const start = m.metadata.page_start;
+                const end = m.metadata.page_end;
+                location = start === end ? `Page ${start}` : `Pages ${start}–${end}`;
+              } else if (sourceType === "ppt" && m.metadata?.slide_number) {
+                location = `Slide ${m.metadata.slide_number}`;
+              }
+              return {
+                lesson_title: m.metadata?.title || "Untitled",
+                excerpt: (m.metadata?.content || "").substring(0, 2000),
+                score: m.score,
+                source_type: sourceType || undefined,
+                location,
+              };
+            });
 
             const contentBlocks = citations
-              .map((c: any) => `[Lesson: ${c.lesson_title}]\n${c.excerpt}`)
+              .map((c: any) => {
+                const loc = c.location ? `, ${c.location}` : "";
+                return `[${c.lesson_title}${loc}]\n${c.excerpt}`;
+              })
               .join("\n\n");
             const prompt = `Answer the question based on the provided content below.\nIf the content is irrelevant, say "I couldn't find that in this lesson."\nCite the lesson title for each fact. Be concise.\n\nCONTENT:\n${contentBlocks}\n\nQUESTION: ${body.question}`;
 
@@ -402,7 +418,7 @@ describe('Prompt construction', () => {
     const prompt = callBody.messages[0].content;
 
     expect(prompt).toContain('based on the provided content');
-    expect(prompt).toContain('[Lesson: Python Variables]');
+    expect(prompt).toContain('[Python Variables]');
     expect(prompt).toContain('QUESTION: What is X?');
   });
 
@@ -421,6 +437,107 @@ describe('Prompt construction', () => {
     });
 
     expect(res.status).toBe(502);
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  Citation source_type + location (PDF/PPT page/slide)
+// ════════════════════════════════════════════════════════
+
+describe('Citation source_type + location', () => {
+  it('includes source_type and location for PDF content', async () => {
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({
+        lesson_id: 'l1',
+        org_id: 'org-test',
+        source_type: 'pdf',
+        page_start: 5,
+        page_end: 5,
+      }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const res = await ask({
+      question: 'What is a variable?',
+      learner_id: 'learner-1',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    });
+
+    const body: any = await res.json();
+    expect(body.citations).toHaveLength(1);
+    expect(body.citations[0].source_type).toBe('pdf');
+    expect(body.citations[0].location).toBe('Page 5');
+  });
+
+  it('includes source_type and location for PPT content', async () => {
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({
+        lesson_id: 'l1',
+        org_id: 'org-test',
+        source_type: 'ppt',
+        slide_number: 3,
+      }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const res = await ask({
+      question: 'What is a variable?',
+      learner_id: 'learner-1',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    });
+
+    const body: any = await res.json();
+    expect(body.citations).toHaveLength(1);
+    expect(body.citations[0].source_type).toBe('ppt');
+    expect(body.citations[0].location).toBe('Slide 3');
+  });
+
+  it('includes source_type "video" with no location for video content', async () => {
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({
+        lesson_id: 'l1',
+        org_id: 'org-test',
+        source_type: 'video',
+      }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const res = await ask({
+      question: 'What is a variable?',
+      learner_id: 'learner-1',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    });
+
+    const body: any = await res.json();
+    expect(body.citations).toHaveLength(1);
+    expect(body.citations[0].source_type).toBe('video');
+    expect(body.citations[0].location).toBeNull();
+  });
+
+  it('omits source_type + location for legacy chunks missing metadata', async () => {
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({ lesson_id: 'l1', org_id: 'org-test' }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const res = await ask({
+      question: 'What is a variable?',
+      learner_id: 'learner-1',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    });
+
+    const body: any = await res.json();
+    expect(body.citations).toHaveLength(1);
+    expect(body.citations[0].source_type).toBeUndefined();
+    expect(body.citations[0].location).toBeNull();
   });
 });
 
