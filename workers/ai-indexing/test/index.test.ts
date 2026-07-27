@@ -323,6 +323,43 @@ describe('Content-aware chunking', () => {
 });
 
 // ════════════════════════════════════════════════════════
+//  GET /status — lesson indexing check
+// ════════════════════════════════════════════════════════
+
+describe('GET /status', () => {
+  it('reports lesson as indexed when vectors exist', async () => {
+    (env as any).VECTORIZE_INDEX.getByIds = vi.fn().mockResolvedValue([
+      { id: 'lesson-lesson-123', values: [], metadata: { title: 'Test', content_type: 'pdf', source_type: 'pdf', page_start: 1 } },
+      { id: 'lesson-lesson-123-chunk0', values: [], metadata: { title: 'Test', content_type: 'pdf', source_type: 'pdf', page_start: 2 } },
+    ]);
+
+    const req = new Request('http://localhost/status?lesson_id=lesson-123');
+    const res = await worker.fetch(req, env);
+
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.lesson_id).toBe('lesson-123');
+    expect(body.indexed).toBe(true);
+    expect(body.chunks).toBe(2);
+    expect(body.last_indexed[0].source_type).toBe('pdf');
+    expect(body.last_indexed[0].page_start).toBe(1);
+  });
+
+  it('reports lesson as not indexed when no vectors found', async () => {
+    (env as any).VECTORIZE_INDEX.getByIds = vi.fn().mockResolvedValue([]);
+
+    const req = new Request('http://localhost/status?lesson_id=lesson-missing');
+    const res = await worker.fetch(req, env);
+
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+    expect(body.lesson_id).toBe('lesson-missing');
+    expect(body.indexed).toBe(false);
+    expect(body.chunks).toBe(0);
+  });
+});
+
+// ════════════════════════════════════════════════════════
 //  POST /index — video lesson
 // ════════════════════════════════════════════════════════
 

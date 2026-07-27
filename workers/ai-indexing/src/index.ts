@@ -421,7 +421,35 @@ async function handleEnvCheck(env: Env): Promise<Response> {
 
 async function handleStatus(env: Env, url: URL): Promise<Response> {
   try {
-    // Quick Vectorize health check — query with a small embedding
+    const lessonId = url.searchParams.get("lesson_id");
+
+    // Per-lesson check: query Vectorize for chunks belonging to this lesson
+    if (lessonId) {
+      // Check up to 20 chunk IDs (covers most lessons)
+      const ids = Array.from({ length: 20 }, (_, i) =>
+        i === 0 ? `lesson-${lessonId}` : `lesson-${lessonId}-chunk${i - 1}`
+      );
+      const existing = await env.VECTORIZE_INDEX.getByIds(ids);
+      const indexed = existing.filter((v: any) => v !== null);
+
+      return Response.json({
+        lesson_id: lessonId,
+        indexed: indexed.length > 0,
+        chunks: indexed.length,
+        last_indexed: indexed.length > 0
+          ? indexed.map((v: any) => ({
+              id: v.id,
+              title: v.metadata?.title,
+              content_type: v.metadata?.content_type,
+              source_type: v.metadata?.source_type,
+              page_start: v.metadata?.page_start,
+              slide_number: v.metadata?.slide_number,
+            }))
+          : null,
+      });
+    }
+
+    // Full status — Vectorize health check
     const embedding = await env.AI.run(EMBEDDING_MODEL, { text: "health check" });
     const vector: number[] = embedding.data?.[0] ?? embedding;
     const results = await env.VECTORIZE_INDEX.query(vector, { topK: 1, returnMetadata: false });
