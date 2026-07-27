@@ -422,10 +422,10 @@ async function handleEnvCheck(env: Env): Promise<Response> {
 async function handleStatus(env: Env, url: URL): Promise<Response> {
   try {
     const lessonId = url.searchParams.get("lesson_id");
+    const orgId = url.searchParams.get("org_id");
 
     // Per-lesson check: query Vectorize for chunks belonging to this lesson
     if (lessonId) {
-      // Check up to 20 chunk IDs (covers most lessons)
       const ids = Array.from({ length: 20 }, (_, i) =>
         i === 0 ? `lesson-${lessonId}` : `lesson-${lessonId}-chunk${i - 1}`
       );
@@ -437,22 +437,63 @@ async function handleStatus(env: Env, url: URL): Promise<Response> {
         indexed: indexed.length > 0,
         chunks: indexed.length,
         last_indexed: indexed.length > 0
-          ? indexed.map((v: any) => ({
-              id: v.id,
-              title: v.metadata?.title,
-              content_type: v.metadata?.content_type,
-              source_type: v.metadata?.source_type,
-              page_start: v.metadata?.page_start,
-              slide_number: v.metadata?.slide_number,
-            }))
+          ? indexed.map((v: any) => {
+              const meta = v.metadata as Record<string, any> | undefined;
+              return {
+                id: v.id,
+                title: meta?.title,
+                content_type: meta?.content_type,
+                source_type: meta?.source_type,
+                page_start: meta?.page_start,
+                slide_number: meta?.slide_number,
+              };
+            })
           : null,
+      });
+    }
+
+    // Per-org lesson list: query Vectorize with org_id filter, deduplicate by lesson
+    if (orgId) {
+      const embedding = await env.AI.run(EMBEDDING_MODEL, { text: "org lesson list" });
+      const vector: number[] = embedding.data?.[0] ?? embedding;
+      const results = await env.VECTORIZE_INDEX.query(vector, {
+        topK: 50,
+        returnMetadata: true,
+        filter: { org_id: orgId },
+      });
+
+      // Deduplicate by lesson_id, keeping highest score per lesson
+      const lessonMap = new Map<string, any>();
+      for (const m of results.matches || []) {
+        const meta = m.metadata as Record<string, any> | undefined;
+        const lid = meta?.lesson_id as string | undefined;
+        if (!lid) continue;
+        if (!lessonMap.has(lid) || m.score > (lessonMap.get(lid)?.score || 0)) {
+          lessonMap.set(lid, {
+            lesson_id: lid,
+            title: String(meta?.title || "Untitled"),
+            content_type: String(meta?.content_type || "unknown"),
+            course_id: String(meta?.course_id || ""),
+            module_id: String(meta?.module_id || ""),
+            chunks: 1,
+            best_score: m.score,
+          });
+        } else {
+          lessonMap.get(lid).chunks++;
+        }
+      }
+
+      return Response.json({
+        org_id: orgId,
+        lessons_indexed: lessonMap.size,
+        lessons: Array.from(lessonMap.values()),
       });
     }
 
     // Full status — Vectorize health check
     const embedding = await env.AI.run(EMBEDDING_MODEL, { text: "health check" });
     const vector: number[] = embedding.data?.[0] ?? embedding;
-    const results = await env.VECTORIZE_INDEX.query(vector, { topK: 1, returnMetadata: false });
+    const results = await env.VECTORIZE_INDEX.query(vector, { topK: 1 });
     return Response.json({
       status: "ok",
       vectorize: {
