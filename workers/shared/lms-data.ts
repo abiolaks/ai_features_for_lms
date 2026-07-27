@@ -117,9 +117,9 @@ export async function fetchCatalog(
         };
       }
     }
-    return { catalogue: stub || [], fromLms: false };
+    return { catalogue: (stub || []) as CatalogueCourse[], fromLms: false };
   } catch {
-    return { catalogue: stub || [], fromLms: false };
+    return { catalogue: (stub || []) as CatalogueCourse[], fromLms: false };
   }
 }
 
@@ -157,8 +157,8 @@ export async function fetchProgress(
         return { progress: lmsProgress, fromLms: true };
       }
     }
-    return { progress: stub || [], fromLms: false };
+    return { progress: (stub || []) as ProgressEntry[], fromLms: false };
   } catch {
-    return { progress: stub || [], fromLms: false };
+    return { progress: (stub || []) as ProgressEntry[], fromLms: false };
   }
 }
