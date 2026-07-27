@@ -121,6 +121,16 @@ interface StructuredChunk {
   slide_number?: number;
 }
 
+/** Find the best breakpoint at or before `end`: prefers `. ` > `\n` > ` `. */
+function findBreakpoint(text: string, start: number, end: number): number {
+  if (end >= text.length) return text.length;
+  const period = text.lastIndexOf(". ", end);
+  const newline = text.lastIndexOf("\n", end);
+  const space = text.lastIndexOf(" ", end);
+  const breakpoint = Math.max(period, newline, space);
+  return breakpoint > start + CHUNK_SIZE / 2 ? breakpoint + 1 : end;
+}
+
 function chunkContent(rawChunks: RawChunk[], sourceType: string): StructuredChunk[] {
   const result: StructuredChunk[] = [];
   for (const raw of rawChunks) {
@@ -136,16 +146,7 @@ function chunkContent(rawChunks: RawChunk[], sourceType: string): StructuredChun
       // Split large chunks while preserving page/slide attribution
       let start = 0;
       while (start < raw.text.length) {
-        let end = start + CHUNK_SIZE;
-        if (end < raw.text.length) {
-          const period = raw.text.lastIndexOf(". ", end);
-          const newline = raw.text.lastIndexOf("\n", end);
-          const space = raw.text.lastIndexOf(" ", end);
-          const breakpoint = Math.max(period, newline, space);
-          if (breakpoint > start + CHUNK_SIZE / 2) {
-            end = breakpoint + 1;
-          }
-        }
+        const end = findBreakpoint(raw.text, start, start + CHUNK_SIZE);
         result.push({
           text: raw.text.substring(start, end).trim(),
           source_type: sourceType,
@@ -166,17 +167,7 @@ function chunkText(text: string): string[] {
   const chunks: string[] = [];
   let start = 0;
   while (start < text.length) {
-    let end = start + CHUNK_SIZE;
-    // Try to break at a sentence boundary
-    if (end < text.length) {
-      const period = text.lastIndexOf(". ", end);
-      const newline = text.lastIndexOf("\n", end);
-      const space = text.lastIndexOf(" ", end);
-      const breakpoint = Math.max(period, newline, space);
-      if (breakpoint > start + CHUNK_SIZE / 2) {
-        end = breakpoint + 1;
-      }
-    }
+    const end = findBreakpoint(text, start, start + CHUNK_SIZE);
     chunks.push(text.substring(start, end).trim());
     start = end;
   }
@@ -579,8 +570,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
       fullText = decoder.decode(new Uint8Array(pdfBytes));
     }
 
-    const fullTextStr = Array.isArray(fullText) ? fullText.join(" ") : fullText;
-    if (!fullTextStr || fullTextStr.trim().length < 10) {
+    const flatText = Array.isArray(fullText) ? fullText.join(" ") : fullText;
+    if (!flatText || flatText.trim().length < 10) {
       return Response.json({
         error: "no_extractable_text",
         key: body.r2Key,
@@ -588,7 +579,7 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
       }, { status: 422 });
     }
 
-    console.log(`[extract-pdf] ${body.title}: ${fullTextStr.length} chars from "${body.r2Key}"`);
+    console.log(`[extract-pdf] ${body.title}: ${flatText.length} chars from "${body.r2Key}"`);
 
     // 3. Queue for indexing (same pipeline as videos)
     // For PDF: send per-page text array so chunking preserves page numbers
@@ -599,8 +590,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
         id: body.lesson_id,
         title: body.title,
         contentType: key.endsWith(".pptx") ? "ppt" : "pdf",
-        content: Array.isArray(fullText) ? fullText : fullTextStr,
-        durationSeconds: fullTextStr.length,
+        content: Array.isArray(fullText) ? fullText : flatText,
+        durationSeconds: flatText.length,
         course_id: body.course_id || "",
         module_id: body.module_id || "",
       },
@@ -608,8 +599,8 @@ async function handleExtractPdf(body: ExtractPdfRequest, env: Env): Promise<Resp
 
     return Response.json({
       status: "queued",
-      chars: fullTextStr.length,
-      message: `Extracted ${fullTextStr.length} chars, queued for indexing`,
+      chars: flatText.length,
+      message: `Extracted ${flatText.length} chars, queued for indexing`,
     }, { status: 202 });
 
   } catch (err: any) {
