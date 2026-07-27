@@ -84,6 +84,7 @@ export default {
     }
 
     // ── 1. Budget check ──
+    await ensureBudget(env.DB, body.org_id);
     const budget = await getBudget(env.DB, body.org_id);
     const exhausted = budget && budget.tokens_used_this_period >= budget.monthly_token_cap;
 
@@ -156,6 +157,7 @@ async function handleStream(req: Request, env: Env): Promise<Response> {
   }
 
   // Budget check
+  await ensureBudget(env.DB, body.org_id);
   const budget = await getBudget(env.DB, body.org_id);
   if (budget && budget.tokens_used_this_period >= budget.monthly_token_cap) {
     return json({ error: 'budget_exhausted' }, 429);
@@ -268,6 +270,18 @@ function aiStreamToSSE(
 }
 
 // ──── Helpers ────
+
+const DEFAULT_MONTHLY_CAP = 100000;
+
+async function ensureBudget(db: D1Database, orgId: string): Promise<void> {
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO org_budgets (org_id, monthly_token_cap, tokens_used_this_period, billing_period_start)
+       VALUES (?, ?, 0, unixepoch())`
+    )
+    .bind(orgId, DEFAULT_MONTHLY_CAP)
+    .run();
+}
 
 async function getBudget(db: D1Database, orgId: string): Promise<BudgetRow | null> {
   const result = await db
