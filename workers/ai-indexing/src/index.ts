@@ -301,6 +301,11 @@ export default {
       return handleDiagExtract(url, env);
     }
 
+    // GET /diag-text?content=...&title=...&lesson_id=...&org_id=...&course_id=...&module_id=...&content_type=...
+    if (req.method === "GET" && path === "/diag-text") {
+      return handleDiagText(url, env);
+    }
+
     // GET /r2-list — diagnostic: list R2 objects
     if (req.method === "GET" && path === "/r2-list") {
       return handleR2List(url, env);
@@ -566,6 +571,40 @@ async function handleDiagIndex(videoId: string, lessonId: string, title: string,
 
 async function handleDiagDeindex(lessonId: string, env: Env): Promise<Response> {
   return handleDeindex({ entity: { id: lessonId } } as any, env);
+}
+
+// ════════════════════════════════════════════════════════
+//  GET /diag-text — Diagnostic text/html content index (dev)
+// ════════════════════════════════════════════════════════
+
+async function handleDiagText(url: URL, env: Env): Promise<Response> {
+  const content = url.searchParams.get("content") || "";
+  const title = url.searchParams.get("title") || "Untitled";
+  const lessonId = url.searchParams.get("lesson_id") || "unknown";
+  const orgId = url.searchParams.get("org_id") || "dev-org";
+  const courseId = url.searchParams.get("course_id") || "";
+  const moduleId = url.searchParams.get("module_id") || "";
+  const contentType = url.searchParams.get("content_type") || "text";
+
+  if (!content || content.trim().length < 10) {
+    return Response.json({ error: "missing or too short content param" }, { status: 400 });
+  }
+
+  console.log(`[diag-text] indexing "${title}": ${content.length} chars, type=${contentType}`);
+
+  return handleIndex({
+    event: "publish",
+    org_id: orgId,
+    entity: {
+      id: lessonId,
+      title,
+      contentType,
+      content: content,
+      course_id: courseId,
+      module_id: moduleId,
+      durationSeconds: content.length,
+    },
+  }, env);
 }
 
 async function handleDiagExtract(url: URL, env: Env): Promise<Response> {
