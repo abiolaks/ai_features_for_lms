@@ -61,6 +61,20 @@ export default {
       return json({ error: 'not_found' }, 404);
     }
 
+    // POST variant: accepts stub data for offline testing
+    if (req.method === 'POST') {
+      let body: { learner_id?: string; org_id?: string; profile?: Partial<LearnerProfile>; catalogue?: Partial<CatalogueCourse>[]; progress?: Partial<ProgressEntry>[] };
+      try {
+        body = await req.json();
+      } catch {
+        return json({ error: 'invalid_json' }, 400);
+      }
+      if (!body.learner_id || !body.org_id) {
+        return json({ error: 'missing_param: learner_id or org_id' }, 400);
+      }
+      return handleSkillGapWithStub(body.learner_id, body.org_id, env, body.profile, body.catalogue, body.progress);
+    }
+
     if (req.method !== 'GET') {
       return json({ error: 'method_not_allowed' }, 405);
     }
@@ -99,7 +113,7 @@ async function handleSkillGap(
   let profile: LearnerProfile;
   let profileFromLms = false;
   try {
-    const result = await fetchProfile(env);
+    const result = await fetchProfile(env, undefined, learnerId);
     profile = result.profile;
     profileFromLms = result.fromLms;
   } catch {
@@ -404,6 +418,131 @@ function completedTitleSet(progress: ProgressEntry[]): Set<string> {
       .filter((p) => p.status === 'completed')
       .map((p) => p.title.toLowerCase().trim()),
   );
+}
+
+// ════════════════════════════════════════════════════════
+//  POST /mentor/skill-gap (stub mode)
+// ════════════════════════════════════════════════════════
+
+async function handleSkillGapWithStub(
+  learnerId: string,
+  orgId: string,
+  env: Env,
+  stubProfile?: Partial<LearnerProfile>,
+  stubCatalog?: Partial<CatalogueCourse>[],
+  stubProgress?: Partial<ProgressEntry>[],
+): Promise<Response> {
+  const dataSpan = startSpan('data.fetch');
+  setAttr(dataSpan, 'learner_id', learnerId);
+  setAttr(dataSpan, 'org_id', orgId);
+  setAttr(dataSpan, 'source', 'stub');
+
+  const profile: LearnerProfile = {
+    skills: stubProfile?.skills || [],
+    goals: stubProfile?.goals || '',
+    experience_level: stubProfile?.experience_level || 'beginner',
+    interests: stubProfile?.interests || [],
+    streak_days: stubProfile?.streak_days || 0,
+    points: stubProfile?.points || 0,
+  };
+  setAttr(dataSpan, 'profile_skills', profile.skills.length);
+
+  const catalogue: CatalogueCourse[] = (stubCatalog || []).map((c) => ({
+    id: c.id,
+    title: c.title || 'Unknown',
+    difficulty: c.difficulty || 'beginner',
+    category: c.category || '',
+    prerequisites: c.prerequisites || [],
+  }));
+  setAttr(dataSpan, 'catalog_courses', catalogue.length);
+
+  const progress: ProgressEntry[] = (stubProgress || []).map((p) => ({
+    title: p.title || 'Unknown',
+    status: p.status || 'in_progress',
+    progress_pct: p.progress_pct || 0,
+  }));
+  setAttr(dataSpan, 'progress_entries', progress.length);
+
+  if (profile.skills.length === 0) {
+    setAttr(dataSpan, 'no_skills', true);
+    endSpan(dataSpan);
+    return json({ learner_skills: [], gaps: [], summary: "No skill data found. Add your skills to your learner profile so we can identify gaps and recommend courses.", ai_status: 'degraded' }, 200);
+  }
+
+  const learnerSkillSet = new Set(profile.skills.map((s) => s.toLowerCase().trim()));
+  const completedTitles = completedTitleSet(progress);
+  const inProgressTitles = new Set(
+    progress.filter((p) => p.status === 'in_progress').map((p) => p.title.toLowerCase().trim()),
+  );
+
+  const gapMap = new Map<string, CatalogueCourse[]>();
+  for (const course of catalogue) {
+    const title = course.title?.toLowerCase().trim() || '';
+    if (completedTitles.has(title)) continue;
+    for (const prereq of course.prerequisites || []) {
+      const prereqLower = prereq.toLowerCase().trim();
+      if (!learnerSkillSet.has(prereqLower)) {
+        const existing = gapMap.get(prereqLower) || [];
+        existing.push(course);
+        gapMap.set(prereqLower, existing);
+      }
+    }
+  }
+  for (const course of catalogue) {
+    const title = course.title?.toLowerCase().trim() || '';
+    if (completedTitles.has(title) || inProgressTitles.has(title)) continue;
+    const cat = course.category?.toLowerCase().trim();
+    if (cat && !learnerSkillSet.has(cat) && !gapMap.has(cat)) {
+      gapMap.set(cat, [course]);
+    }
+  }
+
+  const gapEntries = Array.from(gapMap.entries()).map(([skill, courses]) => ({
+    skill,
+    courses_available: courses.length,
+    estimated_hours: estimateHoursForCourses(courses),
+  }));
+
+  setAttr(dataSpan, 'gaps_identified', gapEntries.length);
+  setAttr(dataSpan, 'courses_relevant', catalogue.length);
+  endSpan(dataSpan);
+
+  const prompt = buildPrompt(profile, gapEntries, catalogue, progress);
+
+  const gapSpan = startSpan('skill_gap.generate');
+  setAttr(gapSpan, 'org_id', orgId);
+  setAttr(gapSpan, 'learner_id', learnerId);
+  setAttr(gapSpan, 'skill_count', profile.skills.length);
+  setAttr(gapSpan, 'gap_candidates', gapEntries.length);
+
+  try {
+    const gwSpan = startSpan('ai_gateway.generate');
+    setAttr(gwSpan, 'tier', 'standard');
+    const result = await callGateway(env.AI_GATEWAY, prompt, orgId);
+    setAttr(gwSpan, 'status', result ? 200 : 502);
+    endSpan(gwSpan);
+
+    if (!result) {
+      setAttr(gapSpan, 'ai_gateway_error', true);
+      setAttr(gapSpan, 'ai_status', 'degraded');
+      endSpan(gapSpan);
+      return json(placeholderResponse(), 200);
+    }
+
+    setAttr(gapSpan, 'llm_model', result.model);
+    setAttr(gapSpan, 'llm_tokens', result.tokens);
+    const parsed = parseGapAnalysis(result.text, profile.skills, gapMap);
+    setAttr(gapSpan, 'ai_status', 'generated');
+    setAttr(gapSpan, 'gap_count', parsed.gaps.length);
+    endSpan(gapSpan);
+    return json(parsed, 200);
+  } catch (err: any) {
+    setAttr(gapSpan, 'ai_gateway_error', true);
+    setAttr(gapSpan, 'ai_status', 'degraded');
+    setAttr(gapSpan, 'error', err.message);
+    endSpan(gapSpan);
+    return json(placeholderResponse(), 200);
+  }
 }
 
 // ════════════════════════════════════════════════════════

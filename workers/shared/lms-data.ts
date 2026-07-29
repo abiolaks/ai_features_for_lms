@@ -48,6 +48,7 @@ export interface LmsEnv {
 export async function fetchProfile(
   env: LmsEnv,
   stub?: Partial<LearnerProfile>,
+  learnerId?: string,
 ): Promise<{ profile: LearnerProfile; fromLms: boolean }> {
   const defaultProfile: LearnerProfile = {
     skills: stub?.skills || [],
@@ -59,7 +60,10 @@ export async function fetchProfile(
   };
 
   try {
-    const resp = await fetchLms(env, { path: `/api/v1/learner/profile` });
+    const path = learnerId
+      ? `/api/v1/learner/profile?user_id=${encodeURIComponent(learnerId)}`
+      : `/api/v1/learner/profile`;
+    const resp = await fetchLms(env, { path });
     if (resp.ok) {
       const raw = (await resp.json()) as any;
       const data = raw.data || raw;

@@ -209,7 +209,7 @@ async function gatherData(body: RecRequest, env: Env, fetchRecs: boolean): Promi
   // ── Learner profile (shared) ──
   const profSpan = startSpan("lms.fetch");
   setAttr(profSpan, "endpoint", "profile");
-  const { profile: sharedProfile, fromLms: profileFromLms } = await fetchProfile(env, body.profile as any);
+  const { profile: sharedProfile, fromLms: profileFromLms } = await fetchProfile(env, body.profile as any, body.learner_id);
   setAttr(profSpan, "status", profileFromLms ? 200 : "stub");
   endSpan(profSpan);
   const profile: LearnerProfile = { ...sharedProfile };

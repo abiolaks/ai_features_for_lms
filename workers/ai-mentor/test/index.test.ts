@@ -147,8 +147,8 @@ describe('ai-mentor /mentor/skill-gap', () => {
     expect(body.error).toContain('org_id');
   });
 
-  it('returns 405 for POST', async () => {
-    const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'POST' });
+  it('returns 405 for PUT', async () => {
+    const req = new Request('https://ai-mentor/mentor/skill-gap?learner_id=learner-1&org_id=org-test', { method: 'PUT' });
     const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
     expect(resp.status).toBe(405);
   });
@@ -349,5 +349,66 @@ describe('ai-mentor /mentor/skill-gap', () => {
     // spark and data-modeling are prerequisites the learner doesn't have
     expect(gapSkills).toContain('spark');
     expect(gapSkills).toContain('data-modeling');
+  });
+
+  // ──── POST Stub Mode ────
+
+  it('POST accepts stub profile/catalog/progress data', async () => {
+    const stubProfile = { skills: ['python', 'sql'], goals: 'Become data engineer', experience_level: 'intermediate' };
+    const stubCatalog = [
+      { title: 'Apache Spark', difficulty: 'intermediate', category: 'distributed-computing', prerequisites: ['python', 'spark'] },
+      { title: 'Data Modeling', difficulty: 'intermediate', category: 'data-modeling', prerequisites: ['sql', 'data-modeling'] },
+    ];
+
+    const req = new Request('https://ai-mentor/mentor/skill-gap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        learner_id: 'learner-1',
+        org_id: 'org-test',
+        profile: stubProfile,
+        catalogue: stubCatalog,
+        progress: [{ title: 'SQL Mastery', status: 'completed' }],
+      }),
+    });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
+    expect(resp.status).toBe(200);
+
+    const body: any = await resp.json();
+    expect(body.learner_skills).toEqual(['python', 'sql']);
+    expect(body.gaps.length).toBeGreaterThanOrEqual(1);
+    // spark and data-modeling are gaps
+    const gapSkills = body.gaps.map((g: any) => g.skill);
+    expect(gapSkills).toContain('spark');
+    expect(gapSkills).toContain('data-modeling');
+    expect(body.ai_status).toBe('generated');
+  });
+
+  it('POST returns 400 for missing learner_id', async () => {
+    const req = new Request('https://ai-mentor/mentor/skill-gap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ org_id: 'org-test' }),
+    });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
+    expect(resp.status).toBe(400);
+  });
+
+  it('POST returns message when stub has no skills', async () => {
+    const req = new Request('https://ai-mentor/mentor/skill-gap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        learner_id: 'learner-1',
+        org_id: 'org-test',
+        profile: { skills: [] },
+      }),
+    });
+    const resp = await worker.fetch(req, { ...env, AI_GATEWAY: gateway });
+    expect(resp.status).toBe(200);
+
+    const body: any = await resp.json();
+    expect(body.summary).toContain('No skill data found');
+    expect(body.ai_status).toBe('degraded');
   });
 });

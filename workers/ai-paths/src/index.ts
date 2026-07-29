@@ -113,7 +113,7 @@ async function handleGenerate(
   const profileSpan = startSpan("lms.fetch");
   setAttr(profileSpan, "endpoint", "profile");
   setAttr(profileSpan, "learner_id", body.learner_id);
-  const { profile: lmsProfile, fromLms: profileFromLms } = await fetchProfile(env, body.profile);
+  const { profile: lmsProfile, fromLms: profileFromLms } = await fetchProfile(env, body.profile, body.learner_id);
   setAttr(profileSpan, "status", profileFromLms ? 200 : "stub");
   endSpan(profileSpan);
 

@@ -13,7 +13,7 @@
 - [ ] AI13 Demo Dashboard — built, pending deploy (needs CLOUDFLARE_API_TOKEN with Pages write)
 
 ## Phase 2 (8 deployable slices)
-- [ ] F03a Skill-Gap Analysis
+- [x] F03a Skill-Gap Analysis — deployed (ai-mentor), 29/29 tests
 - [ ] F03b Session Prep Insights
 - [ ] F04a Bottleneck Detection
 - [ ] F04b Engagement Monitoring
