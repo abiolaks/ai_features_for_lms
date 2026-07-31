@@ -1,0 +1,50 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-assistant",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "ai": { "binding": "AI" },
+
+  "vectorize": [
+    {
+      "binding": "VECTORIZE_INDEX",
+      "index_name": "lms-lessons"
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ASSISTANT_SESSION",
+        "class_name": "AssistantSession"
+      }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AssistantSession"]
+    }
+  ],
+
+  "services": [
+    {
+      "binding": "AI_GATEWAY",
+      "service": "ai-gateway"
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1,
+      "persist": true,
+      "invocation_logs": true
+    }
+  }
+}
