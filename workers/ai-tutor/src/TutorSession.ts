@@ -331,7 +331,18 @@ export class TutorSession extends DurableObject<Env> {
       // ── TTS: convert answer to speech (non-fatal) ──
       if (this.currentAnswer && this.currentAnswer.length > 0) {
         try {
-          for await (const chunk of this.generateTTS(this.currentAnswer)) {
+          // Clean markdown and limit length — melotts struggles with formatting & long text
+          const cleanText = this.currentAnswer
+            .replace(/\*\*/g, "")        // strip bold
+            .replace(/\*/g, "")          // strip italic
+            .replace(/`{1,3}/g, "")       // strip code
+            .replace(/^[#>-]\s/gm, "")   // strip headings, blockquotes, lists
+            .replace(/^\d+\.\s/gm, "")   // strip numbered lists
+            .replace(/\n{2,}/g, ". ")    // collapse newlines
+            .replace(/\n/g, " ")         // single newlines to space
+            .substring(0, 2000);          // limit to 2000 chars
+
+          for await (const chunk of this.generateTTS(cleanText)) {
             ws.send(JSON.stringify({
               type: "audio",
               data: chunk.data,
