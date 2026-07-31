@@ -34,6 +34,7 @@ ai_features_for_lms/
 │   ├── ai-paths/              # AI06 — Learning Path Generation
 │   ├── ai-insights/           # AI08 — Post-Quiz Insights with review links
 │   ├── ai-recommendations/    # AI07 — Enhanced Recommendations + fallback engine
+│   ├── ai-bottlenecks/        # F04a — Admin bottleneck detection (aggregate analytics)
 │   └── ai-dashboard/          # AI13 — Demo Dashboard (Pages, static)
 ├── Issues/                    # Issue tracking (done, in-progress, future slices)
 ├── docs/                      # Architecture, API contract, PRD, deployment logs
@@ -54,6 +55,7 @@ ai_features_for_lms/
 | **ai-paths** | AI06 | Personalized learning paths | `POST /paths/generate` | 20 |
 | **ai-insights** | AI08 | Post-quiz coaching with review links | `POST /insights/generate` | 30 |
 | **ai-recommendations** | AI07 | Enhanced recs + fallback engine, 24h KV cache | `GET|POST /recommendations/dashboard`, `/next` | 23 |
+| **ai-bottlenecks** | F04a | Admin bottleneck detection — aggregate analytics | `GET /admin/bottlenecks` | 37 |
 | **ai-dashboard** | AI13 | Static Pages site — worker status cards | Pages deploy | Built |
 
 ## COMMANDS

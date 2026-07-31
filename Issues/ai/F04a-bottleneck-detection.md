@@ -37,11 +37,19 @@ Analyze aggregate learner data across an org to identify where learners consiste
 
 ## Acceptance criteria
 
-- [ ] Identifies modules where median completion >2× expected time
-- [ ] Identifies topics where quiz scores below configurable benchmark
-- [ ] Each bottleneck includes: severity, finding, suggestion, rationale, affected count
-- [ ] No insights when cohort <10 learners (returns "insufficient data" message)
-- [ ] No individual learner data exposed in any response
-- [ ] Calls AI03 for natural-language findings + suggestions
-- [ ] Unit tests: bottleneck math, threshold logic, anonymity enforcement
-- [ ] Observability: data fetch, computation, gateway call spans
+- [x] Identifies modules where median completion >2× expected time
+- [x] Identifies topics where quiz scores below configurable benchmark
+- [x] Each bottleneck includes: severity, finding, suggestion, rationale, affected count
+- [x] No insights when cohort <10 learners (returns "insufficient data" message)
+- [x] No individual learner data exposed in any response
+- [x] Calls AI03 for natural-language findings + suggestions
+- [x] Unit tests: bottleneck math, threshold logic, anonymity enforcement
+- [x] Observability: data fetch, computation, gateway call spans
+
+## Done
+
+- **Worker:** `workers/ai-bottlenecks/`
+- **Endpoint:** `GET /admin/bottlenecks?org_id={org}&period=last_90_days`
+- **Tests:** 37/37 passing
+- **LMS endpoints used:** `GET /v1/admin/progress/aggregate`, `GET /v1/admin/assessments/aggregate`
+- **Degraded modes:** LMS unreachable, AI gateway failure, non-JSON LLM output, cohort < 10, no bottlenecks found
