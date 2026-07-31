@@ -14,6 +14,7 @@
 | **ai-recommendations** | `ai-recommendations.yomi-alarape.workers.dev` | LMS frontend (browser) | "Recommended for you" + "What's next?" |
 | **ai-insights** | `ai-insights.yomi-alarape.workers.dev` | LMS frontend (browser) | Post-quiz coaching + mentor session prep |
 | **ai-assistant** | `ai-assistant.yomi-alarape.workers.dev` | LMS frontend (browser) | Platform-wide chat assistant — course discovery, topic Q&A, multi-turn conversation |
+| **mentor** | `mentor.yomi-alarape.workers.dev` | LMS frontend (browser) | Skill-gap analysis — compare learner skills vs catalogue |
 | **ai-gateway** | Internal only (service binding) | Other AI workers | LLM routing, token budgeting (never called by LMS) |
 
 ---
@@ -66,6 +67,7 @@
 │  POST /mentor/session-prep   ← mentor session agenda           │
 │  POST /assistant/ask          ← platform-wide Q&A               │
 │  POST /assistant/clear        ← reset assistant conversation     │
+│  GET  /mentor/skill-gap       ← skill-gap analysis              │
 │                                                                 │
 │  Auth: None currently (open). Will be behind LMS Gateway later. │
 │  No secrets needed in frontend code.                            │
@@ -596,6 +598,83 @@ Content-Type: application/json
 
 Call when: learner clicks "New conversation" or logs out.
 
+### GET /mentor/skill-gap — Skill-gap analysis
+
+```
+GET https://mentor.yomi-alarape.workers.dev/mentor/skill-gap?learner_id=user-42&org_id=org-wragby
+```
+
+Compares the learner's current skills against the course catalogue. Identifies gaps and recommends courses with estimated effort.
+
+| Param | Required | Notes |
+|-------|----------|-------|
+| `learner_id` | ✅ | Stable per-learner ID |
+| `org_id` | ✅ | Org isolation, scopes catalogue |
+
+Worker fetches profile + catalogue + progress from LMS, maps skills against course requirements via LLM, returns structured gap analysis.
+
+**Response (200):**
+
+```json
+{
+  "learner_skills": ["python", "sql"],
+  "gaps": [
+    {
+      "skill": "spark",
+      "current_level": "none",
+      "required_level": "intermediate",
+      "courses_available": 2,
+      "estimated_hours": 40
+    },
+    {
+      "skill": "machine learning",
+      "current_level": "beginner",
+      "required_level": "intermediate",
+      "courses_available": 3,
+      "estimated_hours": 60
+    }
+  ],
+  "summary": "Strong in Python and SQL. Biggest gap is distributed computing. 3 courses available."
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `learner_skills` | `string[]` | Skills extracted from learner profile |
+| `gaps` | `GapEntry[]` | Skills the learner is missing |
+| `gaps[].skill` | `string` | Name of the missing skill |
+| `gaps[].current_level` | `string` | Learner's current proficiency (`none`, `beginner`, `intermediate`, `advanced`) |
+| `gaps[].required_level` | `string` | Level needed for catalogue courses |
+| `gaps[].courses_available` | `number` | How many courses in catalogue teach this skill |
+| `gaps[].estimated_hours` | `number` | Estimated effort to close the gap |
+| `summary` | `string` | AI-generated human-readable analysis (2-3 sentences) |
+
+**Empty states:**
+
+| Condition | Response |
+|-----------|----------|
+| No skills on profile | `learner_skills: []`, `gaps: []`, summary suggesting to add skills |
+| No catalogue courses | `learner_skills: [...]`, `gaps: []`, summary noting no courses available |
+| LLM unavailable | Gaps computed from course categories/keywords, summary notes degraded status |
+
+**Frontend integration example:**
+
+```javascript
+async function getSkillGaps(learnerId, orgId) {
+  const url = `https://mentor.yomi-alarape.workers.dev/mentor/skill-gap?learner_id=${learnerId}&org_id=${orgId}`;
+  const res = await fetch(url);
+  const data = await res.json();
+
+  if (data.learner_skills.length === 0) {
+    // Prompt learner to add skills to profile
+    showAddSkillsPrompt();
+    return;
+  }
+
+  renderGapAnalysis(data.gaps, data.summary);
+}
+```
+
 ### POST /insights/generate — Post-quiz coaching
 
 ```
@@ -742,6 +821,9 @@ curl -X POST https://ai-assistant.yomi-alarape.workers.dev/assistant/clear \
   -H "Content-Type: application/json" \
   -d '{"learner_id":"learner-42"}'
 
+# Skill-gap analysis
+curl "https://mentor.yomi-alarape.workers.dev/mentor/skill-gap?learner_id=learner-42&org_id=org-wragby"
+
 # Get post-quiz insights
 curl -X POST https://ai-insights.yomi-alarape.workers.dev/insights/generate \
   -H "Content-Type: application/json" \
@@ -794,3 +876,4 @@ All workers return descriptive errors. Never throw 5xx to clients — errors ret
 - [ ] (Frontend) Call `POST /assistant/clear` on logout / "New conversation" click
 - [ ] (Frontend) Call `POST /insights/generate` after quiz submission
 - [ ] (Frontend) Call `POST /mentor/session-prep` before mentor 1-on-1 sessions
+- [ ] (Frontend) Call `GET /mentor/skill-gap` for learner dashboard skill-gap widget
