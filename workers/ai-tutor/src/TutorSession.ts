@@ -366,6 +366,8 @@ export class TutorSession extends DurableObject<Env> {
 
   private async handleVoiceAsk(ws: WebSocket, body: VoiceAskRequest & { type: string }) {
     const span = startSpan("voice.ask");
+    setAttr(span, "org_id", body.org_id);
+    setAttr(span, "modality", "stt-text-out");
 
     try {
       // ── Validate audio ──
