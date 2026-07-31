@@ -18,6 +18,7 @@ Learner ──→ AI Tutor / Paths / Recs ──→ AI03 Gateway ──→ LLM (
 | **ai-paths** | Personalized learning paths from LMS data | `ai-paths.yomi-alarape.workers.dev` | 20/20 ✅ |
 | **ai-insights** | Post-quiz coaching with review links | `ai-insights.yomi-alarape.workers.dev` | 30/30 ✅ |
 | **ai-recommendations** | Enhanced recs + fallback engine, 24h KV cache | `ai-recommendations.yomi-alarape.workers.dev` | 23/23 ✅ |
+| **ai-bottlenecks** | Admin bottleneck detection — aggregate analytics | `ai-bottlenecks.yomi-alarape.workers.dev` | 37/37 ✅ |
 | **ai-dashboard** | Static Pages site — 6 live worker cards | `ai-dashboard.pages.dev` | Built ⏳ |
 
 ## Phase 2 — In Progress (8 deployable slices)
