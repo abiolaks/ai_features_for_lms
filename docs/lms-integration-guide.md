@@ -1,6 +1,6 @@
 # AI Workers — LMS Integration Guide
 
-> For the LMS Team. All 6 deployed workers, their endpoints, and how to integrate.
+> For the LMS Team. All 7 deployed workers, their endpoints, and how to integrate.
 
 ---
 
@@ -13,6 +13,7 @@
 | **ai-paths** | `ai-paths.yomi-alarape.workers.dev` | LMS frontend (browser) | Personalized learning paths |
 | **ai-recommendations** | `ai-recommendations.yomi-alarape.workers.dev` | LMS frontend (browser) | "Recommended for you" + "What's next?" |
 | **ai-insights** | `ai-insights.yomi-alarape.workers.dev` | LMS frontend (browser) | Post-quiz coaching with review links |
+| **ai-assistant** | `ai-assistant.yomi-alarape.workers.dev` | LMS frontend (browser) | Platform-wide chat assistant — course discovery, topic Q&A, multi-turn conversation |
 | **ai-gateway** | Internal only (service binding) | Other AI workers | LLM routing, token budgeting (never called by LMS) |
 
 ---
@@ -61,6 +62,8 @@
 │  POST /recommendations/dashboard  ← "For You" widget            │
 │  POST /recommendations/next   ← "What's next?" after course     │
 │  POST /insights/generate      ← quiz coaching                   │
+│  POST /assistant/ask          ← platform-wide Q&A               │
+│  POST /assistant/clear        ← reset assistant conversation     │
 │                                                                 │
 │  Auth: None currently (open). Will be behind LMS Gateway later. │
 │  No secrets needed in frontend code.                            │
@@ -500,6 +503,80 @@ Content-Type: application/json
 
 Prerequisite boost: +15 points if a candidate lists the completed `course_id` as a prerequisite.
 
+### POST /assistant/ask — Platform-wide chat assistant
+
+```
+POST https://ai-assistant.yomi-alarape.workers.dev/assistant/ask
+Content-Type: application/json
+
+{
+  "question": "What courses cover Python?",
+  "learner_id": "user-42",
+  "org_id": "org-wragby"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `question` | ✅ | Free-text question (max 2000 chars) |
+| `learner_id` | ✅ | Stable per-learner ID (routes to their Durable Object session) |
+| `org_id` | ✅ | Org isolation — answers scoped to this org's indexed content |
+
+**Response (200):**
+
+```json
+{
+  "answer": "The platform covers AI topics including machine learning, deep learning, and generative AI.\n\n### Suggested Courses\n- AI-Driven Business Innovation — covers fundamentals of ML and its business applications",
+  "citations": [
+    {
+      "lesson_title": "How AI Actually Works",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "excerpt": "Machine learning is a central approach within AI because instead of hard coding...",
+      "score": 0.79,
+      "source_type": "video"
+    }
+  ],
+  "suggested_courses": [
+    {
+      "title": "AI-Driven Business Innovation A Practical Guide for SMEs",
+      "course_id": "019f0513-90ba-7170-bf05-8011a0e3f028",
+      "reason": "Covers the core types of machine learning including supervised and unsupervised learning"
+    }
+  ],
+  "history_length": 4
+}
+```
+
+**Key differences from the Tutor:**
+
+| | Tutor (POST /tutor/ask) | Assistant (POST /assistant/ask) |
+|---|---|---|
+| Scope | One lesson | **All courses** |
+| Requires | `lesson_id`, `course_id` | Only `learner_id`, `org_id` |
+| Returns | `citations` | `citations` + `suggested_courses` |
+| Use case | "Explain this concept from the video" | "What should I learn?" / "Which course covers X?" |
+| Session | Per learner + course | **Per learner** (one conversation across all courses) |
+
+**Degraded behavior:**
+- No matching content → `"I couldn't find that in the platform content."` (citations empty)
+- AI Gateway down → returns citations only with `"AI service temporarily unavailable"`
+- LMS unreachable → answers with citations + course suggestions from indexed metadata only
+
+**Conversation state:** Persists per learner via Durable Object + SQLite. Max 20 messages in context. Follow-ups like "which one for a beginner?" work because the DO remembers the previous topic.
+
+### POST /assistant/clear — Reset assistant conversation
+
+```
+POST https://ai-assistant.yomi-alarape.workers.dev/assistant/clear
+Content-Type: application/json
+
+{ "learner_id": "user-42" }
+```
+
+**Response:** `{ "status": "cleared" }`
+
+Call when: learner clicks "New conversation" or logs out.
+
 ### POST /insights/generate — Post-quiz coaching
 
 ```
@@ -557,6 +634,16 @@ curl -X POST https://ai-recommendations.yomi-alarape.workers.dev/recommendations
   -H "Content-Type: application/json" \
   -d '{"learner_id":"learner-42","org_id":"org-wragby"}'
 
+# Ask the platform assistant
+curl -X POST https://ai-assistant.yomi-alarape.workers.dev/assistant/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question":"What courses cover Python?","learner_id":"learner-42","org_id":"org-wragby"}'
+
+# Clear assistant conversation
+curl -X POST https://ai-assistant.yomi-alarape.workers.dev/assistant/clear \
+  -H "Content-Type: application/json" \
+  -d '{"learner_id":"learner-42"}'
+
 # Get post-quiz insights
 curl -X POST https://ai-insights.yomi-alarape.workers.dev/insights/generate \
   -H "Content-Type: application/json" \
@@ -599,4 +686,6 @@ All workers return descriptive errors. Never throw 5xx to clients — errors ret
 - [ ] (Frontend) Call `POST /paths/generate` for "My Learning Path" page
 - [ ] (Frontend) Call `POST /recommendations/dashboard` for "For You" widget
 - [ ] (Frontend) Call `POST /recommendations/next` after course completion
+- [ ] (Frontend) Call `POST /assistant/ask` from browser when learner opens platform assistant
+- [ ] (Frontend) Call `POST /assistant/clear` on logout / "New conversation" click
 - [ ] (Frontend) Call `POST /insights/generate` after quiz submission
