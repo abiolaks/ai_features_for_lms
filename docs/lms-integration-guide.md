@@ -12,7 +12,7 @@
 | **ai-tutor** | `ai-tutor.yomi-alarape.workers.dev` | LMS frontend (browser) | Grounded Q&A with citations, WebSocket streaming |
 | **ai-paths** | `ai-paths.yomi-alarape.workers.dev` | LMS frontend (browser) | Personalized learning paths |
 | **ai-recommendations** | `ai-recommendations.yomi-alarape.workers.dev` | LMS frontend (browser) | "Recommended for you" + "What's next?" |
-| **ai-insights** | `ai-insights.yomi-alarape.workers.dev` | LMS frontend (browser) | Post-quiz coaching with review links |
+| **ai-insights** | `ai-insights.yomi-alarape.workers.dev` | LMS frontend (browser) | Post-quiz coaching + mentor session prep |
 | **ai-gateway** | Internal only (service binding) | Other AI workers | LLM routing, token budgeting (never called by LMS) |
 
 ---
@@ -45,6 +45,7 @@
 │  GET /api/v1/learner/assessments/{id}                           │
 │  GET /api/v1/learner/assessments/attempts/{id}                  │
 │  GET /api/v1/modules/{moduleId}/lessons                         │
+│  GET /api/v1/learner/assessments/summary?userId=&org_id=       │
 │                                                                 │
 │  Auth: X-API-Key header (LMS_INTERNAL_KEY)                      │
 └─────────────────────────────────────────────────────────────────┘
@@ -61,6 +62,7 @@
 │  POST /recommendations/dashboard  ← "For You" widget            │
 │  POST /recommendations/next   ← "What's next?" after course     │
 │  POST /insights/generate      ← quiz coaching                   │
+│  POST /mentor/session-prep   ← mentor session agenda           │
 │                                                                 │
 │  Auth: None currently (open). Will be behind LMS Gateway later. │
 │  No secrets needed in frontend code.                            │
@@ -308,6 +310,23 @@ Called by workers to check LMS reachability before making data calls.
 
 Note: wrapper uses `{ "data": [...] }` without a `success` flag.
 
+### GET /api/v1/learner/assessments/summary?userId=<uuid>&organization_id=<uuid>
+
+```json
+{
+  "success": true,
+  "data": {
+    "total_attempts": 7,
+    "avg_score_percent": 72,
+    "lowest_topic": "recursion",
+    "lowest_topic_score": 45,
+    "recent_attempts": [{"id":"a1","score":68},{"id":"a2","score":82}]
+  }
+}
+```
+
+Used by: `POST /mentor/session-prep` for quiz-based urgency in mentor agendas.
+
 ---
 
 ## Pattern C: Frontend-Facing APIs
@@ -533,6 +552,85 @@ Worker fetches attempt details + assessment metadata + module lessons from LMS, 
 
 ---
 
+### POST /mentor/session-prep — Mentor session agenda
+
+```
+POST https://ai-insights.yomi-alarape.workers.dev/mentor/session-prep
+Content-Type: application/json
+
+{
+  "learner_id": "<learner-uuid>",
+  "mentor_id": "<mentor-uuid>",
+  "org_id": "<org-uuid>"
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `learner_id` | ✅ | Must be a valid UUID (not plain string like `user-42`) |
+| `mentor_id` | ✅ | Stable mentor identifier |
+| `org_id` | ✅ | Org isolation |
+
+Worker fetches learner profile, progress, and assessment summary from LMS, identifies stalled modules (<30% progress) and lowest quiz topics, then generates a 3-topic session agenda via LLM prioritized by urgency.
+
+**Response (200):**
+
+```json
+{
+  "recent_activity": {
+    "completed_lessons": 1,
+    "quiz_scores": { "avg": 72, "lowest_topic": "recursion" },
+    "stalled_modules": ["Advanced Algorithms"]
+  },
+  "suggested_agenda": [
+    {
+      "topic": "Recursion review",
+      "reason": "Lowest quiz score (45%) — must address foundational gaps",
+      "duration_min": 15
+    },
+    {
+      "topic": "Algorithm complexity",
+      "reason": "Blocks progress in Advanced Algorithms (12% complete)",
+      "duration_min": 20
+    },
+    {
+      "topic": "Next steps toward Data Engineering",
+      "reason": "Align with learner goal to become data engineer",
+      "duration_min": 10
+    }
+  ],
+  "prep_materials": [
+    { "lesson_title": "Python Basics", "link": "/courses/course-101" }
+  ],
+  "ai_status": "generated"
+}
+```
+
+`ai_status`: `"generated"` (LLM agenda), `"degraded"` (LLM/gateway down — returns skeleton agenda with generic topics like "Review learner profile", "Assess current progress", "Set session goals").
+
+**Skeleton agenda (no-activity or degraded):**
+
+```json
+{
+  "suggested_agenda": [
+    { "topic": "Review learner profile", "reason": "Understand background, skills, and goals", "duration_min": 10 },
+    { "topic": "Assess current progress", "reason": "Review completed courses and identify gaps", "duration_min": 15 },
+    { "topic": "Set session goals", "reason": "Align on priorities for today and next steps", "duration_min": 10 }
+  ]
+}
+```
+
+When stalled modules exist, the skeleton injects an "Unblock: <module>" item. `prep_materials` link to courses from the learner's enrollment data.
+
+**LMS endpoints consumed:**
+- `GET /api/v1/learner/profile?user_id=<uuid>` — name, skills, goals
+- `GET /api/v1/progress/user?userId=<uuid>` — enrollments, stalled modules
+- `GET /api/v1/learner/assessments/summary?userId=<uuid>&organization_id=<uuid>` — avg score, lowest topic
+
+> ⚠️ **Note:** `user_id`/`userId` params must be valid UUIDs. Plain strings like `user-42` return 422 validation errors. The progress endpoint returns 500 for users with no enrollments (LMS bug) — worker degrades gracefully.
+
+---
+
 ## Quick Curl Tests
 
 ```bash
@@ -561,6 +659,11 @@ curl -X POST https://ai-recommendations.yomi-alarape.workers.dev/recommendations
 curl -X POST https://ai-insights.yomi-alarape.workers.dev/insights/generate \
   -H "Content-Type: application/json" \
   -d '{"learner_id":"learner-42","org_id":"org-wragby","attempt_id":"<attempt-uuid>","assessment_id":"<assessment-uuid>"}'
+
+# Get mentor session prep agenda
+curl -X POST https://ai-insights.yomi-alarape.workers.dev/mentor/session-prep \
+  -H "Content-Type: application/json" \
+  -d '{"learner_id":"<learner-uuid>","mentor_id":"<mentor-uuid>","org_id":"<org-uuid>"}'
 ```
 
 ---
@@ -592,6 +695,7 @@ All workers return descriptive errors. Never throw 5xx to clients — errors ret
 - [ ] Build `GET /api/v1/learner/assessments/{id}`
 - [ ] Build `GET /api/v1/learner/assessments/attempts/{id}`
 - [ ] Build `GET /api/v1/modules/{moduleId}/lessons`
+- [ ] Build `GET /api/v1/learner/assessments/summary?userId=<uuid>&organization_id=<uuid>` (session prep)
 - [ ] Fire `POST /index` webhook when lessons are published/updated
 - [ ] Fire `POST /deindex` webhook when lessons are deleted/unpublished
 - [ ] (Frontend) Call `POST /tutor/ask` from browser when learner opens tutor widget
@@ -600,3 +704,4 @@ All workers return descriptive errors. Never throw 5xx to clients — errors ret
 - [ ] (Frontend) Call `POST /recommendations/dashboard` for "For You" widget
 - [ ] (Frontend) Call `POST /recommendations/next` after course completion
 - [ ] (Frontend) Call `POST /insights/generate` after quiz submission
+- [ ] (Frontend) Call `POST /mentor/session-prep` before mentor 1-on-1 sessions
