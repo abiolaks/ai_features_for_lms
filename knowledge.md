@@ -1,3 +1,67 @@
+## 2026-07-29 — Session: Phase 2 Unblocked — lmsapi.json Has All Required Endpoints
+
+### Discovery
+
+`lmsapi.json` (Jul 29, 4.2MB) is a **significantly newer** API spec than the old `api.json` (Jun 11, 3.6MB). The LMS backend team has already built all aggregate/admin endpoints needed by Phase 2.
+
+### New Endpoints (not in old api.json)
+
+| Endpoint | Tag | Purpose |
+|----------|-----|---------|
+| `GET /v1/admin/progress/aggregate` | `AiAdminAnalytics` | Per-module aggregate: median_completion_days, expected_completion_days, enrolled/completed/stalled learners, cohort suppression (<10 learners) |
+| `GET /v1/admin/assessments/aggregate` | `AiAdminAnalytics` | Topic-level quiz scores, overall avg, score_trend (up/down/flat) |
+| `GET /v1/admin/engagement` | `AiAdminAnalytics` | Video completion rates by duration bucket, drop-off data, activity patterns (peak/low day, peak hour), completion rates |
+| `POST /v1/admin/lessons/{lessonId}/generate-questions` | `QuestionGeneration` | LMS-side question generation with questionCount, types[], difficulty params. Returns draftId + questions array |
+| `POST /v1/admin/questions/ingest` | `AiQuestionIngest` | Ingest generated questions into LMS with assessmentId, options, correct_answer, difficulty |
+| `POST /v1/admin/lessons/question-drafts/{draftId}/approve` | `QuestionGeneration` | Approval workflow — submit draftId + assessmentId to publish questions |
+| `GET /v1/mentors` | `AiMentorDirectory` | Mentor directory with id, name, specializations[], experience_levels[], availability[], bio, past_mentee_count, avg_mentee_rating, org_id |
+| `GET /v1/mentors/{id}` | `AiMentorDirectory` | Single mentor detail |
+| `POST /v1/admin/ai/provision-org/{orgId}` | AI provisioning | Provision AI features for an org |
+| `POST /v1/admin/ai/backfill/{orgId}` | AI provisioning | Backfill content for a specific org |
+| `POST /v1/admin/ai/backfill-all` | AI provisioning | Backfill all orgs |
+| `GET /v1/admin/ai/status/{orgId}` | AI provisioning | Check AI indexing status for an org |
+| `GET /v1/learner/assessments/summary` | `AiAdminAnalytics` | Per-learner quiz summary: total_attempts, avg_score_percent, lowest_topic, lowest_topic_score, recent_attempts — **unblocks F03b quiz data** |
+
+### What This Unblocks
+
+| Feature | Previously | Now |
+|---------|-----------|-----|
+| **F04a** Bottleneck Detection | Blocked — no aggregate progress/quiz endpoints | ✅ `progress/aggregate` + `assessments/aggregate` cover all data needs |
+| **F04b** Engagement Monitoring | Blocked — no engagement aggregate endpoint | ✅ `admin/engagement` has video drop-off, activity patterns, completion rates |
+| **F05** Admin Narratives | Partial — needed F04 data | ✅ Existing `analytics/snapshots` + new aggregate endpoints provide full picture |
+| **F02** Mentor Matching | Blocked — no mentor directory | ✅ `GET /v1/mentors` returns full directory with specializations, availability, ratings |
+| **F07** Question Generation | Planned as AI worker | ⚠️ LMS built it natively — `POST .../generate-questions` handles generation |
+| **F08** Quality Checks | Planned as AI worker | ⚠️ LMS has approval workflow — `question-drafts/{id}/approve`. May still need AI validation step |
+| **F09** Assessment Approval | Planned as split (AI storage + LMS UI) | ⚠️ LMS built ingestion + approval natively. D1 schema may not be needed |
+
+### Revised Phase 2 Plan
+
+**Still build as AI workers:**
+- F03a — Skill-Gap Analysis
+- F03b — Session Prep Insights (**fully unblocked** — `learner/assessments/summary` provides quiz data that was previously missing. No `ai_status: "partial"` needed)
+- F04a — Bottleneck Detection (now with real LMS data, no stubs needed)
+- F04b — Engagement Monitoring (now with real LMS data, no stubs needed)
+- F05 — Admin Analytics Narratives
+- F06 — Platform Assistant
+- F02 — Mentor Matching (now unblocked)
+
+**Shifted to LMS-side (may not need AI workers):**
+- F07 — Question Generation (LMS has `POST /v1/admin/lessons/{lessonId}/generate-questions`)
+- F09 — Assessment Approval Workflow (LMS has `POST /v1/admin/questions/ingest` + `POST .../question-drafts/{id}/approve`)
+
+**TBD:**
+- F08 — Quality Checks. Could be an AI worker called by LMS during generation, or baked into LMS-side validation. Need to check if LMS calls AI03 for quality validation.
+
+### Key Decision
+
+**F04a/F04b no longer need stub data.** The knowledge.md Jul 24 session drafted speculative endpoint specs. The LMS team built real endpoints that are close enough to use directly. The worker can fetch from `progress/aggregate`, `assessments/aggregate`, and `engagement` — then feed the data into AI03 for narrative generation.
+
+### Stale Knowledge
+
+Previous entries recording blockers for F04a/F04b and F02 are now outdated. The Jul 24 session "F04a/F04b LMS Endpoint Spec — Draft for Backend Team" was accurate at the time but the endpoints have since been built.
+
+---
+
 ## 2026-07-24 — Session: F04a/F04b LMS Endpoint Spec — Draft for Backend Team
 
 ### Context
@@ -1211,43 +1275,16 @@ Response shape without quiz data:
 
 ### What's Blocked — LMS Endpoint Gap
 
-**Single missing endpoint:** `GET /v1/learner/assessments?userId=<id>&status=completed&limit=5`
+~~**Single missing endpoint:** `GET /v1/learner/assessments?userId=<id>&status=completed&limit=5`~~
 
-This doesn't exist in `api.json`. The closest matches:
-- `GET /v1/learner/assessments/{id}/attempts` — lists attempts for a specific assessment (need assessment ID first)
-- `GET /v1/learner/assessments/attempts/{attemptId}` — single attempt by ID
-- `GET /v1/learner/assessments` — POST only (starts a new assessment, no GET)
+**✅ RESOLVED (2026-07-29):** `lmsapi.json` now includes `GET /v1/learner/assessments/summary` which provides `total_attempts`, `avg_score_percent`, `lowest_topic`, `lowest_topic_score`, `recent_attempts` — exactly the data needed for quiz-based urgency in the agenda. No `ai_status: "partial"` needed.
 
-Without this, we can't compute `quiz_scores.avg` or `quiz_scores.lowest_topic`. The agenda can't prioritize by quiz urgency as the AC requires.
-
-**Requested endpoint shape:**
-```
-GET /v1/learner/assessments?userId=<id>&status=completed&sort=completed_at:desc&limit=5
-Header: X-API-Key: <LMS_INTERNAL_KEY>
-
-Response:
-{
-  "success": true,
-  "data": [
-    {
-      "id": "019f121f-...",
-      "title": "Recursion Basics Quiz",
-      "courseId": "019f0513-...",
-      "moduleId": "019f121d-...",
-      "scorePercent": 45,
-      "totalQuestions": 5,
-      "correctAnswers": 2,
-      "status": "completed",
-      "completedAt": "2026-07-23T14:30:00Z"
-    }
-  ]
-}
-```
+~~**Requested endpoint shape:**~~ (no longer needed — use the built endpoint)
 
 ### Secondary gap: `/v1/learner/profile?userId=`
 
 `GET /v1/learner/profile` has no query params in api.json — it resolves the learner from auth context. But AI workers call with a service-level `LMS_INTERNAL_KEY`, not per-user credentials. Workaround: use `/v1/learner/preferences` + `/v1/progress/user?userId=` instead.
 
-### Decision
+### Decision (revised)
 
-**Build now, ship with `ai_status: "partial"` and `quiz_scores: null`.** The agenda is still useful — stalled modules + skill gaps + goal alignment give a mentor plenty to work with. When the LMS team adds the assessments listing endpoint, it's a non-breaking enrichment: `quiz_scores` fills in, agenda items get score-based urgency, `ai_status` flips to `"generated"`.
+~~**Build now, ship with `ai_status: "partial"` and `quiz_scores: null`.**~~ **Build with full quiz data from `assessments/summary`.** The `ai_status` should be `"generated"` from the start.
