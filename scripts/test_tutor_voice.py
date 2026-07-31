@@ -150,6 +150,15 @@ async def voice_ask(
                 print(data["text"], end="", flush=True)
                 answer += str(data["text"])
 
+            elif t == "audio":
+                print(f"\n  🔊 audio chunk {data.get('chunk_index','?')} ({len(data.get('data',''))} b64 chars)", end="")
+
+            elif t == "tts_done":
+                print("\n  ✅ TTS complete")
+
+            elif t == "tts_error":
+                print(f"\n  ⚠️ TTS error: {data['error']}")
+
             elif t == "done":
                 print()
                 print("-" * 60)

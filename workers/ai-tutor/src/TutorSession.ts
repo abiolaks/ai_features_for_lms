@@ -12,6 +12,7 @@ import { startSpan, setAttr, endSpan } from "../../shared/observability";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
 const STT_MODEL = "@cf/openai/whisper";
+const TTS_MODEL = "@cf/deepgram/aura-1";  // matches DEFAULT_PERSONA.voice_id
 const SCORE_THRESHOLD = 0.05;  // lowered to catch more chunks for lesson-level filtering
 const TOP_K = 50;  // increased from 15 — gives post-filter more candidates to match
 const EXCERPT_MAX_LEN = 2000;
@@ -326,6 +327,23 @@ export class TutorSession extends DurableObject<Env> {
         answer: this.currentAnswer,
         history_length: history.length + 2,
       }));
+
+      // ── TTS: convert answer to speech (non-fatal) ──
+      if (this.currentAnswer && this.currentAnswer.length > 0) {
+        try {
+          for await (const chunk of this.generateTTS(this.currentAnswer)) {
+            ws.send(JSON.stringify({
+              type: "audio",
+              data: chunk.data,
+              chunk_index: chunk.chunk_index,
+            }));
+          }
+          ws.send(JSON.stringify({ type: "tts_done" }));
+        } catch (err: any) {
+          // TTS failure is non-fatal — text already delivered to client
+          ws.send(JSON.stringify({ type: "tts_error", error: err.message }));
+        }
+      }
     } catch (err: any) {
       ws.send(JSON.stringify({ type: "error", error: err.message }));
     }
@@ -437,6 +455,68 @@ export class TutorSession extends DurableObject<Env> {
       ws.send(JSON.stringify({ type: "error", error: `Voice error: ${err.message}` }));
     }
     endSpan(span);
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  TTS: text-to-speech output (ticket 02)
+  // ═══════════════════════════════════════════════════════
+
+  /**
+   * Generate TTS audio chunks from answer text using the persona's voice.
+   * Yields base64-encoded audio chunks to stream over WebSocket.
+   */
+  private async *generateTTS(text: string): AsyncGenerator<{ data: string; chunk_index: number }> {
+    const span = startSpan("voice.tts");
+    let totalBytes = 0;
+    let chunkCount = 0;
+
+    try {
+      const ttsResponse = await this.env.AI.run(
+        TTS_MODEL,
+        { text, speaker: "angus" },
+        { returnRawResponse: true }
+      ) as Response;
+
+      if (!ttsResponse.ok || !ttsResponse.body) {
+        throw new Error("TTS response invalid");
+      }
+
+      const reader = ttsResponse.body.getReader();
+      const CHUNK_SIZE = 4096; // 4KB chunks for streaming
+      let buffer = new Uint8Array(0);
+      let index = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (value) {
+          const combined = new Uint8Array(buffer.length + value.length);
+          combined.set(buffer);
+          combined.set(value, buffer.length);
+          buffer = combined;
+        }
+
+        while (buffer.length >= CHUNK_SIZE || (done && buffer.length > 0)) {
+          const size = Math.min(CHUNK_SIZE, buffer.length);
+          const chunk = buffer.slice(0, size);
+          buffer = buffer.slice(size);
+          totalBytes += chunk.length;
+          chunkCount++;
+
+          yield {
+            data: btoa(String.fromCharCode(...chunk)),
+            chunk_index: index++,
+          };
+        }
+
+        if (done) break;
+      }
+
+      setAttr(span, "status", "success");
+    } finally {
+      setAttr(span, "audio_bytes", totalBytes);
+      setAttr(span, "chunk_count", chunkCount);
+      endSpan(span);
+    }
   }
 
   // ═══════════════════════════════════════════════════════

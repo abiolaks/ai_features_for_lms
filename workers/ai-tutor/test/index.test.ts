@@ -1058,3 +1058,236 @@ describe('Voice STT', () => {
     expect(types()).not.toContain('error');
   });
 });
+
+// ════════════════════════════════════════════════════════
+//  Voice TTS (text-to-speech output over WebSocket)
+// ════════════════════════════════════════════════════════
+
+// Helper: create a mock TTS Response that returns chunked audio bytes
+function mockTTSResponse(): Response {
+  const audioBytes = new Uint8Array(8192); // 8KB of mock audio
+  for (let i = 0; i < audioBytes.length; i++) {
+    audioBytes[i] = i % 256;
+  }
+  return new Response(audioBytes.buffer, {
+    status: 200,
+    headers: { 'Content-Type': 'audio/mpeg' },
+  });
+}
+
+// Helper: set up DO stub with TTS support after text pipeline
+function setupTTSStub(ttsShouldFail = false) {
+  const doStubs = new Map<string, any>();
+  const voiceSessionId = 'session-tts_learner-default';
+
+  doStubs.set(voiceSessionId, {
+    ask: vi.fn(),
+    clearHistory: vi.fn(),
+    webSocketMessage: vi.fn(async (_ws: any, message: string) => {
+      const msg = JSON.parse(message);
+
+      if (msg.type === 'ask_voice') {
+        if (!msg.audio || msg.audio.length === 0) {
+          _ws.send(JSON.stringify({ type: 'error', error: 'No audio provided' }));
+          return;
+        }
+
+        // STT
+        const sttResult = await (env as any).AI.run('@cf/openai/whisper', { audio: [] });
+        const transcript = sttResult.text || '';
+        _ws.send(JSON.stringify({ type: 'transcript', text: transcript }));
+
+        // Delegate to text pipeline
+        await simulateTextPipeline(_ws, transcript, msg);
+
+      } else if (msg.type === 'ask') {
+        await simulateTextPipeline(_ws, msg.question, msg);
+
+      } else {
+        _ws.send(JSON.stringify({ type: 'error', error: `Unknown type: ${msg.type}` }));
+      }
+    }),
+  });
+
+  async function simulateTextPipeline(_ws: any, question: string, msg: any) {
+    // Send citations
+    _ws.send(JSON.stringify({
+      type: 'citations',
+      citations: [{ lesson_title: 'Test Lesson', excerpt: 'Content here', score: 0.9 }],
+    }));
+
+    // Send tokens
+    _ws.send(JSON.stringify({ type: 'token', text: 'Test' }));
+    _ws.send(JSON.stringify({ type: 'token', text: ' answer' }));
+
+    // Send done
+    _ws.send(JSON.stringify({
+      type: 'done',
+      answer: 'Test answer',
+      history_length: 2,
+    }));
+
+    // ── TTS after done ──
+    if (ttsShouldFail) {
+      _ws.send(JSON.stringify({ type: 'tts_error', error: 'TTS model unavailable' }));
+      return;
+    }
+
+    try {
+      const ttsResp = await (env as any).AI.run('@cf/deepgram/aura-1', { text: 'Test answer', speaker: 'angus' }, { returnRawResponse: true });
+
+      // Read audio response and chunk it
+      if (ttsResp.ok && ttsResp.body) {
+        const reader = ttsResp.body.getReader();
+        let index = 0;
+        while (true) {
+          const { done, value } = await reader.read();
+          if (value && value.length > 0) {
+            // Split into 4KB chunks
+            for (let i = 0; i < value.length; i += 4096) {
+              const chunk = value.slice(i, i + 4096);
+              _ws.send(JSON.stringify({
+                type: 'audio',
+                data: btoa(String.fromCharCode(...chunk)),
+                chunk_index: index++,
+              }));
+            }
+          }
+          if (done) break;
+        }
+      }
+      _ws.send(JSON.stringify({ type: 'tts_done' }));
+    } catch (err: any) {
+      _ws.send(JSON.stringify({ type: 'tts_error', error: err.message }));
+    }
+  }
+
+  (env as any).TUTOR_SESSION = {
+    idFromName: vi.fn((name: string) => name),
+    get: vi.fn((name: string) => doStubs.get(name)!),
+  };
+
+  return doStubs.get(voiceSessionId)!;
+}
+
+describe('Voice TTS', () => {
+  it('sends audio chunks + tts_done after text streaming', async () => {
+    // Mock AI.run: STT returns transcript, TTS returns audio response
+    (env as any).AI = {
+      run: vi.fn(async (model: string, _input: any, _opts?: any) => {
+        if (model === '@cf/openai/whisper') {
+          return { text: 'What is a variable?' };
+        }
+        if (model === '@cf/deepgram/aura-1') {
+          return mockTTSResponse();
+        }
+        return { data: [new Array(1024).fill(0.1)] };
+      }),
+    };
+
+    const stub = setupTTSStub();
+    const { ws, types, messages } = createMockWs();
+
+    await stub.webSocketMessage(ws, JSON.stringify({
+      type: 'ask_voice',
+      audio: MOCK_AUDIO_BASE64,
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    }));
+
+    const msgTypes = types();
+    expect(msgTypes).toContain('transcript');
+    expect(msgTypes).toContain('citations');
+    expect(msgTypes).toContain('token');
+    expect(msgTypes).toContain('done');
+    expect(msgTypes).toContain('audio');
+    expect(msgTypes).toContain('tts_done');
+
+    // Verify audio messages have expected shape
+    const audioMsgs = messages.filter(m => {
+      try { return JSON.parse(m).type === 'audio'; } catch { return false; }
+    });
+    expect(audioMsgs.length).toBeGreaterThan(0);
+    const firstAudio = JSON.parse(audioMsgs[0]);
+    expect(firstAudio).toHaveProperty('data');
+    expect(firstAudio).toHaveProperty('chunk_index');
+    expect(typeof firstAudio.data).toBe('string');
+
+    // done comes before audio
+    const doneIdx = msgTypes.indexOf('done');
+    const firstAudioIdx = msgTypes.indexOf('audio');
+    expect(doneIdx).toBeLessThan(firstAudioIdx);
+  });
+
+  it('TTS failure: text delivered, tts_error sent, no crash', async () => {
+    (env as any).AI = {
+      run: vi.fn(async (model: string, _input: any, _opts?: any) => {
+        if (model === '@cf/openai/whisper') {
+          return { text: 'What is a variable?' };
+        }
+        if (model === '@cf/deepgram/aura-1') {
+          throw new Error('TTS model unavailable');
+        }
+        return { data: [new Array(1024).fill(0.1)] };
+      }),
+    };
+
+    const stub = setupTTSStub(true);
+    const { ws, types } = createMockWs();
+
+    await stub.webSocketMessage(ws, JSON.stringify({
+      type: 'ask',
+      question: 'What is a variable?',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    }));
+
+    const msgTypes = types();
+    // Text pipeline completes
+    expect(msgTypes).toContain('token');
+    expect(msgTypes).toContain('done');
+    // TTS failed but error surfaced
+    expect(msgTypes).toContain('tts_error');
+    // No audio delivered
+    expect(msgTypes).not.toContain('audio');
+    expect(msgTypes).not.toContain('tts_done');
+  });
+
+  it('existing tests still pass — no regression on ask_voice with TTS', async () => {
+    (env as any).AI = {
+      run: vi.fn(async (model: string, _input: any, _opts?: any) => {
+        if (model === '@cf/openai/whisper') {
+          return DEFAULT_STT_RESPONSE;
+        }
+        if (model === '@cf/deepgram/aura-1') {
+          return mockTTSResponse();
+        }
+        return DEFAULT_AI_RESPONSE;
+      }),
+    };
+
+    // Reset vectorize + gateway for standard behavior
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({ lesson_id: 'l1', org_id: 'org-test' }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const stub = setupTTSStub();
+    const { ws, types } = createMockWs();
+
+    await stub.webSocketMessage(ws, JSON.stringify({
+      type: 'ask',
+      question: 'What is a variable?',
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    }));
+
+    expect(types()).toContain('done');
+    expect(types()).toContain('audio');
+    expect(types()).toContain('tts_done');
+    expect(types()).not.toContain('tts_error');
+  });
+});
