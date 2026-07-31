@@ -1280,3 +1280,41 @@ describe('Voice TTS', () => {
     expect(types()).not.toContain('tts_error');
   });
 });
+
+// ════════════════════════════════════════════════════════
+//  Degradation + TTFA (Issue 03)
+// ════════════════════════════════════════════════════════
+
+describe('Degradation', () => {
+  // AI03 gateway down tested at HTTP level (gateway 502 → status 502)
+  // STT failure tested in Voice STT block
+  // TTS failure tested in Voice TTS block
+
+  it('TTFA ≤1.5s achievable in mock (validates pipeline structure)', async () => {
+    (env as any).VECTORIZE_INDEX.query = mockVectorizeQuery([
+      matchingChunk({ lesson_id: 'l1', org_id: 'org-test' }),
+    ]);
+    (env as any).AI_GATEWAY = mockAiGateway(DEFAULT_LLM_RESPONSE);
+
+    const stub = setupVoiceStub();
+    const { ws } = createMockWs();
+
+    const start = Date.now();
+    await stub.webSocketMessage(ws, JSON.stringify({
+      type: 'ask_voice',
+      audio: MOCK_AUDIO_BASE64,
+      lesson_id: 'l1',
+      course_id: 'course-1',
+      org_id: 'org-test',
+    }));
+    const elapsed = Date.now() - start;
+
+    // Verify first response (transcript) in ≤1.5s
+    const messages = ws.messages.map((m: string) => {
+      try { return JSON.parse(m); } catch { return null; }
+    });
+    const transcriptIdx = messages.findIndex((m: any) => m?.type === 'transcript');
+    expect(transcriptIdx).toBeGreaterThanOrEqual(0);
+    expect(elapsed).toBeLessThan(1500); // TTFA ≤1.5s
+  });
+});
