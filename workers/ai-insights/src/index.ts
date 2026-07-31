@@ -1,10 +1,9 @@
 // ============================================================
-// AI08: Post-Quiz Insights
+// AI08: Post-Quiz Insights + F03b: Session Prep Insights
 // ============================================================
-// Generates personalized coaching insights after a learner
-// completes a quiz. Fetches attempt details, assessment
-// metadata, course progress, and lesson sections from LMS,
-// builds a prompt, and calls AI03 Gateway.
+// POST /insights/generate — Personalized coaching after quiz
+// POST /mentor/session-prep — Mentor session agenda from
+//   learner activity, quiz scores, and stalled modules.
 // ============================================================
 
 import { fetchLms } from '../../shared/fetch-lms';
@@ -47,6 +46,44 @@ interface InsightRequest {
   org_id: string;
 }
 
+// ──── F03b: Session Prep Types ────
+
+interface SessionPrepRequest {
+  learner_id: string;
+  mentor_id: string;
+  org_id: string;
+}
+
+interface AgendaItem {
+  topic: string;
+  reason: string;
+  duration_min: number;
+}
+
+interface PrepMaterial {
+  lesson_title: string;
+  link: string;
+}
+
+interface SessionPrepResponse {
+  recent_activity: {
+    completed_lessons: number;
+    quiz_scores: { avg: number; lowest_topic: string };
+    stalled_modules: string[];
+  };
+  suggested_agenda: AgendaItem[];
+  prep_materials: PrepMaterial[];
+  ai_status: string;
+}
+
+interface EnrollmentSummary {
+  id: string;
+  title: string;
+  status: string;
+  progressPercent: number;
+  courseId: string;
+}
+
 interface MissedTopic {
   topic: string;
   review_link: string;
@@ -87,30 +124,63 @@ export default {
       return json({ error: 'method_not_allowed' }, 405);
     }
 
-    if (url.pathname !== '/insights/generate') {
-      return json({ error: 'not_found' }, 404);
+    if (url.pathname === '/insights/generate') {
+      return handleInsightsRoute(req, env);
     }
 
-    let body: { attempt_id?: string; learner_id?: string; org_id?: string };
-    try {
-      body = await req.json();
-    } catch {
-      return json({ error: 'invalid_json' }, 400);
+    if (url.pathname === '/mentor/session-prep') {
+      return handleSessionPrepRoute(req, env);
     }
 
-    if (!body.attempt_id) {
-      return json({ error: 'missing_field: attempt_id' }, 400);
-    }
-    if (!body.learner_id) {
-      return json({ error: 'missing_field: learner_id' }, 400);
-    }
-    if (!body.org_id) {
-      return json({ error: 'missing_field: org_id' }, 400);
-    }
-
-    return handleGenerate(body as InsightRequest, env);
+    return json({ error: 'not_found' }, 404);
   },
 };
+
+// ════════════════════════════════════════════════════════
+//  Route Handlers
+// ════════════════════════════════════════════════════════
+
+async function handleInsightsRoute(req: Request, env: Env): Promise<Response> {
+  let body: { attempt_id?: string; learner_id?: string; org_id?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'invalid_json' }, 400);
+  }
+
+  if (!body.attempt_id) {
+    return json({ error: 'missing_field: attempt_id' }, 400);
+  }
+  if (!body.learner_id) {
+    return json({ error: 'missing_field: learner_id' }, 400);
+  }
+  if (!body.org_id) {
+    return json({ error: 'missing_field: org_id' }, 400);
+  }
+
+  return handleGenerate(body as InsightRequest, env);
+}
+
+async function handleSessionPrepRoute(req: Request, env: Env): Promise<Response> {
+  let body: { learner_id?: string; mentor_id?: string; org_id?: string };
+  try {
+    body = await req.json();
+  } catch {
+    return json({ error: 'invalid_json' }, 400);
+  }
+
+  if (!body.learner_id) {
+    return json({ error: 'missing_field: learner_id' }, 400);
+  }
+  if (!body.mentor_id) {
+    return json({ error: 'missing_field: mentor_id' }, 400);
+  }
+  if (!body.org_id) {
+    return json({ error: 'missing_field: org_id' }, 400);
+  }
+
+  return handleSessionPrep(body as SessionPrepRequest, env);
+}
 
 // ════════════════════════════════════════════════════════
 //  POST /insights/generate
@@ -555,6 +625,405 @@ function placeholderResponse(): InsightResponse {
     insight_text: 'Insights unavailable right now — check back shortly.',
     missed_topics: [],
     tone_check: 'encouraging',
+    ai_status: 'degraded',
+  };
+}
+
+// ════════════════════════════════════════════════════════
+//  POST /mentor/session-prep (F03b)
+// ════════════════════════════════════════════════════════
+
+async function handleSessionPrep(
+  body: SessionPrepRequest,
+  env: Env,
+): Promise<Response> {
+  // ═══════════════════════════════════════════════════════
+  //  SPAN: session_prep.data_fetch — gather all LMS data
+  // ═══════════════════════════════════════════════════════
+  const dataSpan = startSpan('session_prep.data_fetch');
+  setAttr(dataSpan, 'learner_id', body.learner_id);
+  setAttr(dataSpan, 'mentor_id', body.mentor_id);
+  setAttr(dataSpan, 'org_id', body.org_id);
+
+  // 1. Fetch learner profile
+  let learnerName = '';
+  let learnerSkills: string[] = [];
+  let learnerGoals = '';
+  try {
+    const resp = await fetchLms(env, {
+      path: `/api/v1/learner/profile?user_id=${encodeURIComponent(body.learner_id)}`,
+    });
+    if (resp.ok) {
+      const raw = (await resp.json()) as any;
+      const data = raw.data || raw;
+      learnerName = data.name || data.displayName || '';
+      learnerSkills = data.skills || [];
+      learnerGoals = data.goals || '';
+    }
+  } catch {
+    setAttr(dataSpan, 'profile_unavailable', true);
+  }
+
+  // 2. Fetch progress
+  let enrollments: EnrollmentSummary[] = [];
+  let completedCount = 0;
+  const stalledModules: string[] = [];
+  try {
+    const resp = await fetchLms(env, {
+      path: `/api/v1/progress/user?userId=${body.learner_id}`,
+    });
+    if (resp.ok) {
+      const raw = (await resp.json()) as any;
+      const data = raw.data || raw;
+      const items = data.enrollments || [];
+      for (const e of items) {
+        const pct = parseInt(e.progressPercent || '0') || 0;
+        const title = e.courseTitle || e.title || '';
+        enrollments.push({
+          id: e.enrollmentId || e.id || '',
+          title,
+          status: e.status || 'enrolled',
+          progressPercent: pct,
+          courseId: e.courseId || '',
+        });
+        if (e.status === 'completed') completedCount++;
+        // Stalled: in_progress with low progress (< 30%)
+        if (pct > 0 && pct < 30 && e.status !== 'completed') {
+          if (title) stalledModules.push(title);
+        }
+      }
+    }
+  } catch {
+    setAttr(dataSpan, 'progress_unavailable', true);
+  }
+
+  setAttr(dataSpan, 'enrollment_count', enrollments.length);
+  setAttr(dataSpan, 'completed_lessons', completedCount);
+  setAttr(dataSpan, 'stalled_modules', stalledModules.length);
+
+  // 3. Fetch assessment summary
+  let avgScore = 0;
+  let lowestTopic = '';
+  let totalAttempts = 0;
+  try {
+    const resp = await fetchLms(env, {
+      path: `/api/v1/learner/assessments/summary?userId=${encodeURIComponent(body.learner_id)}&organization_id=${encodeURIComponent(body.org_id)}`,
+    });
+    if (resp.ok) {
+      const raw = (await resp.json()) as any;
+      const data = raw.data || raw;
+      avgScore = Math.round(data.avg_score_percent || 0);
+      lowestTopic = data.lowest_topic || '';
+      totalAttempts = data.total_attempts || 0;
+    }
+  } catch {
+    setAttr(dataSpan, 'assessments_unavailable', true);
+  }
+
+  setAttr(dataSpan, 'avg_quiz_score', avgScore);
+  setAttr(dataSpan, 'total_quiz_attempts', totalAttempts);
+  setAttr(dataSpan, 'has_lowest_topic', !!lowestTopic);
+  endSpan(dataSpan);
+
+  // ── Build recent_activity ──
+  const recentActivity = {
+    completed_lessons: completedCount,
+    quiz_scores: { avg: avgScore, lowest_topic: lowestTopic || 'none' },
+    stalled_modules: stalledModules,
+  };
+
+  // ── Empty-state check: no LMS data at all ──
+  const hasAnyData = enrollments.length > 0 || totalAttempts > 0 || learnerSkills.length > 0;
+
+  // ═══════════════════════════════════════════════════════
+  //  Build the session prep prompt
+  // ═══════════════════════════════════════════════════════
+  const prompt = buildSessionPrepPrompt(
+    learnerName,
+    learnerSkills,
+    learnerGoals,
+    enrollments,
+    stalledModules,
+    completedCount,
+    avgScore,
+    lowestTopic,
+  );
+
+  // ═══════════════════════════════════════════════════════
+  //  SPAN: session_prep.agenda_generate — LLM call + parsing
+  // ═══════════════════════════════════════════════════════
+  const agendaSpan = startSpan('session_prep.agenda_generate');
+  setAttr(agendaSpan, 'org_id', body.org_id);
+  setAttr(agendaSpan, 'has_activity_data', hasAnyData);
+
+  try {
+    // ── Call AI03 Gateway ──
+    const gwSpan = startSpan('ai_gateway.generate');
+    setAttr(gwSpan, 'tier', 'standard');
+
+    const result = await callGateway(env.AI_GATEWAY, prompt, body.org_id);
+
+    setAttr(gwSpan, 'status', result ? 200 : 502);
+    endSpan(gwSpan);
+
+    if (!result) {
+      setAttr(agendaSpan, 'ai_gateway_error', true);
+      setAttr(agendaSpan, 'ai_status', 'degraded');
+      endSpan(agendaSpan);
+      return json(skeletonPrepResponse(recentActivity, stalledModules, enrollments), 200);
+    }
+
+    setAttr(agendaSpan, 'llm_model', result.model);
+    setAttr(agendaSpan, 'llm_tokens', result.tokens);
+
+    // Parse LLM response
+    const parsed = parseSessionPrepAgenda(
+      result.text,
+      agendaSpan,
+      recentActivity,
+      stalledModules,
+      enrollments,
+    );
+
+    setAttr(agendaSpan, 'ai_status', 'generated');
+    setAttr(agendaSpan, 'agenda_item_count', parsed.suggested_agenda.length);
+    setAttr(agendaSpan, 'prep_material_count', parsed.prep_materials.length);
+    endSpan(agendaSpan);
+
+    return json(parsed, 200);
+  } catch (err: any) {
+    setAttr(agendaSpan, 'ai_gateway_error', true);
+    setAttr(agendaSpan, 'ai_status', 'degraded');
+    setAttr(agendaSpan, 'error', err.message);
+    endSpan(agendaSpan);
+    return json(skeletonPrepResponse(recentActivity, stalledModules, enrollments), 200);
+  }
+}
+
+// ════════════════════════════════════════════════════════
+//  Session Prep Prompt Builder
+// ════════════════════════════════════════════════════════
+
+function buildSessionPrepPrompt(
+  learnerName: string,
+  skills: string[],
+  goals: string,
+  enrollments: EnrollmentSummary[],
+  stalledModules: string[],
+  completedCount: number,
+  avgScore: number,
+  lowestTopic: string,
+): string {
+  const progressSummary = enrollments
+    .map((e) => {
+      const marker = e.status === 'completed' ? ' [COMPLETED]' : ` [${e.progressPercent}%]`;
+      return `  - ${e.title}${marker}`;
+    })
+    .join('\n') || '  (no course data)';
+
+  const quizSummary = avgScore > 0
+    ? `Average quiz score: ${avgScore}%. Lowest performing topic: "${lowestTopic || 'none'}".`
+    : 'No quiz data available yet.';
+
+  const stalledSummary = stalledModules.length > 0
+    ? stalledModules.map((m) => `  - ${m}`).join('\n')
+    : '  (none — all courses progressing well)';
+
+  return [
+    `You are an expert mentor coach. Generate a structured session preparation agenda for a mentor meeting with a learner.`,
+    ``,
+    `LEARNER CONTEXT:`,
+    learnerName ? `  Name: ${learnerName}` : '',
+    skills.length > 0 ? `  Skills: ${skills.join(', ')}` : '',
+    goals ? `  Goals: ${goals}` : '',
+    ``,
+    `COURSE PROGRESS:`,
+    `  Completed courses: ${completedCount}`,
+    `  Enrollments:`,
+    progressSummary,
+    ``,
+    `QUIZ PERFORMANCE:`,
+    `  ${quizSummary}`,
+    ``,
+    `STALLED MODULES (low progress, may need attention):`,
+    stalledSummary,
+    ``,
+    `INSTRUCTIONS:`,
+    `1. Generate a 3-topic session agenda prioritized by urgency.`,
+    `2. Low quiz scores and stalled modules are highest priority.`,
+    `3. Each agenda item MUST include: topic, reason (specific to this learner), and duration_min (integer).`,
+    `4. If no quiz data, still suggest a productive agenda from progress + skills.`,
+    `5. Be specific — mention actual course names, topics, or skills from the context.`,
+    `6. Never fabricate data — if context is sparse, focus on goal-setting and progress review.`,
+    ``,
+    `Return a JSON object. No other text.`,
+    `Format: {"agenda":[{"topic":"Topic name","reason":"Why this is important for this learner","duration_min":15}]}`,
+  ]
+    .filter((line) => line !== '')
+    .join('\n');
+}
+
+// ════════════════════════════════════════════════════════
+//  Session Prep Response Parser
+// ════════════════════════════════════════════════════════
+
+function parseSessionPrepAgenda(
+  response: string,
+  agendaSpan: SpanContext,
+  recentActivity: SessionPrepResponse['recent_activity'],
+  stalledModules: string[],
+  enrollments: EnrollmentSummary[],
+): SessionPrepResponse {
+  const parsed = parseLlmJson<{
+    agenda?: Array<{ topic?: string; reason?: string; duration_min?: number }>;
+  }>(response);
+
+  if (!parsed || !parsed.agenda || !Array.isArray(parsed.agenda)) {
+    setAttr(agendaSpan, 'parse_failed', response.includes('{') ? 'json_error' : 'no_json');
+    return skeletonPrepResponse(recentActivity, stalledModules, enrollments);
+  }
+
+  // Normalize agenda items — ensure topic, reason, duration_min exist
+  const agenda: AgendaItem[] = parsed.agenda
+    .filter((item) => item && (item.topic || item.reason))
+    .map((item) => ({
+      topic: String(item.topic || 'Review session'),
+      reason: String(item.reason || 'Review learner progress'),
+      duration_min: typeof item.duration_min === 'number' ? item.duration_min : 15,
+    }))
+    .slice(0, 5);
+
+  if (agenda.length === 0) {
+    return skeletonPrepResponse(recentActivity, stalledModules, enrollments);
+  }
+
+  // Build prep materials from enrollments that match agenda topics
+  const prepMaterials: PrepMaterial[] = buildPrepMaterials(agenda, enrollments, stalledModules);
+
+  return {
+    recent_activity: recentActivity,
+    suggested_agenda: agenda,
+    prep_materials: prepMaterials,
+    ai_status: 'generated',
+  };
+}
+
+// ════════════════════════════════════════════════════════
+//  Prep Materials Builder
+// ════════════════════════════════════════════════════════
+
+function buildPrepMaterials(
+  agenda: AgendaItem[],
+  enrollments: EnrollmentSummary[],
+  stalledModules: string[],
+): PrepMaterial[] {
+  const materials: PrepMaterial[] = [];
+  const usedCourseIds = new Set<string>();
+
+  // Strategy: match agenda topic keywords against enrollment titles,
+  // then fall back to stalled modules, then any enrollment.
+  for (const item of agenda) {
+    const topicTokens = tokenize(item.topic);
+    let bestMatch: EnrollmentSummary | null = null;
+    let bestScore = 0;
+
+    for (const e of enrollments) {
+      if (!e.courseId || usedCourseIds.has(e.courseId)) continue;
+      const score = overlapScore(topicTokens, tokenize(e.title));
+      if (score > bestScore) {
+        bestScore = score;
+        bestMatch = e;
+      }
+    }
+
+    if (bestMatch && bestMatch.courseId) {
+      usedCourseIds.add(bestMatch.courseId);
+      materials.push({
+        lesson_title: bestMatch.title,
+        link: `/courses/${bestMatch.courseId}`,
+      });
+      continue;
+    }
+
+    // Fallback: use stalled modules (course name as title)
+    for (const stalled of stalledModules) {
+      const stalledKey = stalled.toLowerCase();
+      if (!usedCourseIds.has(stalledKey)) {
+        usedCourseIds.add(stalledKey);
+        // Find the enrollment matching this stalled module
+        const match = enrollments.find((e) => e.title === stalled);
+        materials.push({
+          lesson_title: stalled,
+          link: match?.courseId ? `/courses/${match.courseId}` : `/courses`,
+        });
+        break;
+      }
+    }
+  }
+
+  // If no materials matched, add any available enrollment
+  if (materials.length === 0 && enrollments.length > 0) {
+    const first = enrollments.find((e) => e.courseId);
+    if (first) {
+      materials.push({
+        lesson_title: first.title,
+        link: `/courses/${first.courseId}`,
+      });
+    }
+  }
+
+  return materials;
+}
+
+// ════════════════════════════════════════════════════════
+//  Skeleton / Placeholder Response
+// ════════════════════════════════════════════════════════
+
+function skeletonPrepResponse(
+  recentActivity: SessionPrepResponse['recent_activity'],
+  stalledModules: string[],
+  enrollments: EnrollmentSummary[],
+): SessionPrepResponse {
+  const agenda: AgendaItem[] = [
+    {
+      topic: 'Review learner profile',
+      reason: 'Understand background, skills, and goals',
+      duration_min: 10,
+    },
+    {
+      topic: 'Assess current progress',
+      reason: 'Review completed courses and identify gaps',
+      duration_min: 15,
+    },
+    {
+      topic: 'Set session goals',
+      reason: 'Align on priorities for today and next steps',
+      duration_min: 10,
+    },
+  ];
+
+  // Include stalled module info in agenda if available
+  if (stalledModules.length > 0) {
+    agenda.splice(1, 0, {
+      topic: `Unblock: ${stalledModules[0]}`,
+      reason: 'Low progress — learner may be stuck',
+      duration_min: 15,
+    });
+  }
+
+  // Build prep materials from available enrollments
+  const prepMaterials: PrepMaterial[] = enrollments
+    .filter((e) => e.courseId)
+    .slice(0, 3)
+    .map((e) => ({
+      lesson_title: e.title,
+      link: `/courses/${e.courseId}`,
+    }));
+
+  return {
+    recent_activity: recentActivity,
+    suggested_agenda: agenda.slice(0, 5),
+    prep_materials: prepMaterials,
     ai_status: 'degraded',
   };
 }

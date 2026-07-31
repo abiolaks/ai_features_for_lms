@@ -593,3 +593,744 @@ describe('Observability spans', () => {
     expect(parsed.duration_ms).toBeGreaterThanOrEqual(0);
   });
 });
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Fixtures
+// ════════════════════════════════════════════════════════
+
+const MOCK_SESSION_PROFILE = {
+  success: true,
+  data: {
+    id: 'learner-1',
+    name: 'Jane Learner',
+    displayName: 'Jane Learner',
+    skills: ['Python', 'SQL', 'Data Analysis'],
+    goals: 'Become a data engineer',
+    experience_level: 'intermediate',
+  },
+};
+
+const MOCK_SESSION_PROGRESS = {
+  success: true,
+  data: {
+    totalEnrollments: 3,
+    completedEnrollments: 1,
+    enrollments: [
+      { enrollmentId: 'enr-1', courseId: 'course-101', courseTitle: 'Python Basics', status: 'completed', progressPercent: '100' },
+      { enrollmentId: 'enr-2', courseId: 'course-202', courseTitle: 'Advanced Algorithms', status: 'enrolled', progressPercent: '12' },
+      { enrollmentId: 'enr-3', courseId: 'course-303', courseTitle: 'SQL for Data', status: 'enrolled', progressPercent: '55' },
+    ],
+  },
+};
+
+const MOCK_ASSESSMENT_SUMMARY = {
+  success: true,
+  data: {
+    total_attempts: 7,
+    avg_score_percent: 72,
+    lowest_topic: 'recursion',
+    lowest_topic_score: 45,
+    recent_attempts: '[{"id":"a1","score":68},{"id":"a2","score":82}]',
+  },
+};
+
+const DEFAULT_SESSION_PREP_LLM = {
+  response: JSON.stringify({
+    agenda: [
+      { topic: 'Recursion review', reason: 'Lowest quiz score (45%) — must address foundational gaps', duration_min: 15 },
+      { topic: 'Algorithm complexity', reason: 'Blocks progress in Advanced Algorithms (12% complete)', duration_min: 20 },
+      { topic: 'Next steps toward Data Engineering', reason: 'Align with learner goal to become data engineer', duration_min: 10 },
+    ],
+  }),
+  model_used: '@cf/meta/llama-3.2-3b-instruct',
+  provider: 'cloudflare',
+  tokens_used: 120,
+  throttle_warning: false,
+};
+
+// ──── Helper ────
+
+async function sessionPrep(body: object) {
+  const req = new Request('http://localhost/mentor/session-prep', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const ctx = createExecutionContext();
+  const res = await worker.fetch(req, env, ctx);
+  await waitOnExecutionContext(ctx);
+  return res;
+}
+
+const VALID_SP_BODY = {
+  learner_id: 'learner-1',
+  mentor_id: 'mentor-42',
+  org_id: 'org-test',
+};
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Validation
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Validation', () => {
+  it('rejects missing learner_id', async () => {
+    const res = await sessionPrep({ mentor_id: 'm1', org_id: 'org-test' });
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toContain('learner_id');
+  });
+
+  it('rejects missing mentor_id', async () => {
+    const res = await sessionPrep({ learner_id: 'l1', org_id: 'org-test' });
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toContain('mentor_id');
+  });
+
+  it('rejects missing org_id', async () => {
+    const res = await sessionPrep({ learner_id: 'l1', mentor_id: 'm1' });
+    expect(res.status).toBe(400);
+    const body: any = await res.json();
+    expect(body.error).toContain('org_id');
+  });
+
+  it('rejects invalid JSON', async () => {
+    const req = new Request('http://localhost/mentor/session-prep', {
+      method: 'POST',
+      body: 'not json',
+    });
+    const res = await worker.fetch(req, env);
+    expect(res.status).toBe(400);
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Happy Path
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Happy path', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_SESSION_PREP_LLM);
+  });
+
+  it('returns 200 with recent_activity, suggested_agenda, prep_materials', async () => {
+    const res = await sessionPrep(VALID_SP_BODY);
+
+    expect(res.status).toBe(200);
+    const body: any = await res.json();
+
+    // recent_activity
+    expect(body.recent_activity).toBeDefined();
+    expect(body.recent_activity.completed_lessons).toBe(1);
+    expect(body.recent_activity.quiz_scores.avg).toBe(72);
+    expect(body.recent_activity.quiz_scores.lowest_topic).toBe('recursion');
+    expect(body.recent_activity.stalled_modules).toEqual(['Advanced Algorithms']);
+
+    // suggested_agenda
+    expect(body.suggested_agenda).toBeDefined();
+    expect(body.suggested_agenda.length).toBe(3);
+    for (const item of body.suggested_agenda) {
+      expect(item.topic).toBeTruthy();
+      expect(item.reason).toBeTruthy();
+      expect(typeof item.duration_min).toBe('number');
+      expect(item.duration_min).toBeGreaterThan(0);
+    }
+
+    // prep_materials
+    expect(body.prep_materials).toBeDefined();
+    expect(Array.isArray(body.prep_materials)).toBe(true);
+
+    expect(body.ai_status).toBe('generated');
+  });
+
+  it('agenda items are prioritized by urgency (stalled modules + low scores first)', async () => {
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    const firstTopic = body.suggested_agenda[0];
+    // First item should reference quiz weakness or stalled modules
+    const firstReason = firstTopic.reason.toLowerCase();
+    const isUrgent = firstReason.includes('lowest') || firstReason.includes('stalled') || firstReason.includes('block');
+    expect(isUrgent).toBe(true);
+  });
+
+  it('prep_materials link to courses from progress data', async () => {
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    for (const mat of body.prep_materials) {
+      expect(mat.lesson_title).toBeTruthy();
+      if (mat.link) {
+        expect(mat.link).toMatch(/^\/courses\/.+/);
+      }
+    }
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Empty State
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Empty state', () => {
+  it('returns skeleton agenda when no learner activity', async () => {
+    // LMS returns empty data for everything
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: { enrollments: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_SESSION_PREP_LLM);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(body.recent_activity.completed_lessons).toBe(0);
+    expect(body.recent_activity.quiz_scores.avg).toBe(0);
+    expect(body.recent_activity.quiz_scores.lowest_topic).toBe('none');
+    expect(body.recent_activity.stalled_modules).toEqual([]);
+
+    // Still returns agenda (skeleton or LLM-generated)
+    expect(body.suggested_agenda.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('returns skeleton agenda with default topics when LLM fails', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: { enrollments: [] } }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(body.ai_status).toBe('degraded');
+    expect(body.suggested_agenda.length).toBeGreaterThanOrEqual(1);
+    // Skeleton agenda should have generic topics
+    const topics = body.suggested_agenda.map((a: any) => a.topic);
+    expect(topics.some((t: string) => t.includes('profile') || t.includes('progress') || t.includes('goal'))).toBe(true);
+  });
+
+  it('skeleton agenda includes stalled module topic when available', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(body.ai_status).toBe('degraded');
+    const topics = body.suggested_agenda.map((a: any) => a.topic);
+    expect(topics.some((t: string) => t.includes('Advanced Algorithms'))).toBe(true);
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Degraded Mode
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Degraded mode', () => {
+  it('returns skeleton when LMS is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('Connection refused'))));
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_SESSION_PREP_LLM);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    // Should still respond 200 with skeleton
+    expect(res.status).toBe(200);
+    expect(body.recent_activity.completed_lessons).toBe(0);
+    expect(body.suggested_agenda.length).toBeGreaterThanOrEqual(1);
+    // With no data at all, ai_status from LLM depends on whether gateway works
+    // but at minimum we get a response
+  });
+
+  it('returns degraded when AI gateway fails', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(body.ai_status).toBe('degraded');
+    expect(body.recent_activity.completed_lessons).toBe(1);
+    expect(body.recent_activity.quiz_scores.avg).toBe(72);
+  });
+
+  it('returns degraded when LLM returns non-JSON', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway({
+      response: 'No JSON here, just some text about mentoring.',
+      model_used: 'llama',
+      provider: 'cloudflare',
+      tokens_used: 50,
+      throttle_warning: false,
+    });
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(body.ai_status).toBe('degraded');
+    expect(body.suggested_agenda.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('handles partial LMS data gracefully (some endpoints fail)', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.reject(new Error('Profile down'));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_SESSION_PREP_LLM);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(res.status).toBe(200);
+    // Progress + assessments should still give us useful data
+    expect(body.recent_activity.quiz_scores.avg).toBe(72);
+    expect(body.recent_activity.stalled_modules).toEqual(['Advanced Algorithms']);
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Prompt Construction
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Prompt construction', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_SESSION_PREP_LLM);
+  });
+
+  it('includes learner skills and goals in prompt', async () => {
+    const spy = (env as any).AI_GATEWAY.fetch;
+    spy.mockClear();
+
+    await sessionPrep(VALID_SP_BODY);
+
+    expect(spy).toHaveBeenCalled();
+    const reqBody = JSON.parse(await spy.mock.calls[0][0].text());
+    const prompt = reqBody.messages[0].content;
+
+    expect(prompt).toContain('Jane Learner');
+    expect(prompt).toContain('Python');
+    expect(prompt).toContain('Become a data engineer');
+  });
+
+  it('includes course progress with completion percentages', async () => {
+    const spy = (env as any).AI_GATEWAY.fetch;
+    spy.mockClear();
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const reqBody = JSON.parse(await spy.mock.calls[0][0].text());
+    const prompt = reqBody.messages[0].content;
+
+    expect(prompt).toContain('Python Basics');
+    expect(prompt).toContain('Advanced Algorithms');
+    expect(prompt).toContain('12%');
+    expect(prompt).toContain('[COMPLETED]');
+    expect(prompt).toContain('55%');
+  });
+
+  it('includes quiz summary with lowest topic', async () => {
+    const spy = (env as any).AI_GATEWAY.fetch;
+    spy.mockClear();
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const reqBody = JSON.parse(await spy.mock.calls[0][0].text());
+    const prompt = reqBody.messages[0].content;
+
+    expect(prompt).toContain('72%');
+    expect(prompt).toContain('recursion');
+    expect(prompt).toContain('QUIZ PERFORMANCE');
+  });
+
+  it('includes stalled modules section', async () => {
+    const spy = (env as any).AI_GATEWAY.fetch;
+    spy.mockClear();
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const reqBody = JSON.parse(await spy.mock.calls[0][0].text());
+    const prompt = reqBody.messages[0].content;
+
+    expect(prompt).toContain('STALLED MODULES');
+    expect(prompt).toContain('Advanced Algorithms');
+  });
+
+  it('uses standard tier', async () => {
+    const spy = (env as any).AI_GATEWAY.fetch;
+    spy.mockClear();
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const reqBody = JSON.parse(await spy.mock.calls[0][0].text());
+    expect(reqBody.tier).toBe('standard');
+  });
+
+  it('handles empty profile gracefully in prompt', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    const spy = (env as any).AI_GATEWAY.fetch;
+    spy.mockClear();
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const reqBody = JSON.parse(await spy.mock.calls[0][0].text());
+    const prompt = reqBody.messages[0].content;
+
+    // Should still include progress and quiz data
+    expect(prompt).toContain('QUIZ PERFORMANCE');
+    expect(prompt).toContain('COURSE PROGRESS');
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Observability Spans
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Observability spans', () => {
+  beforeEach(() => {
+    spanLogs = [];
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway(DEFAULT_SESSION_PREP_LLM);
+    vi.spyOn(console, 'log').mockImplementation(mockConsoleLog);
+  });
+
+  it('emits session_prep.data_fetch span with learner context', async () => {
+    await sessionPrep(VALID_SP_BODY);
+
+    const dataSpan = spanLogs.find((l) => l.includes('"span":"session_prep.data_fetch"'));
+    expect(dataSpan).toBeDefined();
+    const parsed = JSON.parse(dataSpan!);
+    expect(parsed.learner_id).toBe('learner-1');
+    expect(parsed.mentor_id).toBe('mentor-42');
+    expect(parsed.completed_lessons).toBe(1);
+    expect(parsed.enrollment_count).toBe(3);
+    expect(parsed.stalled_modules).toBe(1);
+    expect(parsed.avg_quiz_score).toBe(72);
+    expect(parsed.total_quiz_attempts).toBe(7);
+    expect(parsed.has_lowest_topic).toBe(true);
+    expect(parsed.duration_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('emits session_prep.agenda_generate span with ai_status', async () => {
+    await sessionPrep(VALID_SP_BODY);
+
+    const agendaSpan = spanLogs.find((l) => l.includes('"span":"session_prep.agenda_generate"'));
+    expect(agendaSpan).toBeDefined();
+    const parsed = JSON.parse(agendaSpan!);
+    expect(parsed.ai_status).toBe('generated');
+    expect(parsed.agenda_item_count).toBe(3);
+    expect(parsed.prep_material_count).toBeGreaterThanOrEqual(0);
+    expect(parsed.llm_model).toBeTruthy();
+    expect(parsed.llm_tokens).toBeGreaterThanOrEqual(0);
+    expect(parsed.duration_ms).toBeGreaterThanOrEqual(0);
+  });
+
+  it('emits agenda_generate span with degraded when gateway fails', async () => {
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const agendaSpan = spanLogs.find((l) => l.includes('"span":"session_prep.agenda_generate"'));
+    expect(agendaSpan).toBeDefined();
+    const parsed = JSON.parse(agendaSpan!);
+    expect(parsed.ai_status).toBe('degraded');
+    expect(parsed.ai_gateway_error).toBe(true);
+  });
+
+  it('emits ai_gateway.generate sub-span during session prep', async () => {
+    await sessionPrep(VALID_SP_BODY);
+
+    // The gateway span appears for both insight and session prep —
+    // verify it's emitted during session prep flow
+    const gwSpans = spanLogs.filter((l) => l.includes('"span":"ai_gateway.generate"'));
+    expect(gwSpans.length).toBeGreaterThanOrEqual(1);
+    const parsed = JSON.parse(gwSpans[gwSpans.length - 1]);
+    expect(parsed.tier).toBe('standard');
+  });
+
+  it('tracks profile_unavailable in data_fetch span when LMS profile fails', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.reject(new Error('Down'));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const dataSpan = spanLogs.find((l) => l.includes('"span":"session_prep.data_fetch"'));
+    const parsed = JSON.parse(dataSpan!);
+    expect(parsed.profile_unavailable).toBe(true);
+  });
+
+  it('tracks assessments_unavailable in data_fetch span', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.reject(new Error('Down'));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const dataSpan = spanLogs.find((l) => l.includes('"span":"session_prep.data_fetch"'));
+    const parsed = JSON.parse(dataSpan!);
+    expect(parsed.assessments_unavailable).toBe(true);
+  });
+
+  it('tracks has_activity_data flag in agenda_generate span', async () => {
+    await sessionPrep(VALID_SP_BODY);
+
+    const agendaSpan = spanLogs.find((l) => l.includes('"span":"session_prep.agenda_generate"'));
+    const parsed = JSON.parse(agendaSpan!);
+    expect(parsed.has_activity_data).toBe(true);
+  });
+
+  it('tracks has_activity_data=false when no LMS data', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve(new Response(JSON.stringify({ data: {} }), { status: 200, headers: { 'Content-Type': 'application/json' } }))));
+
+    await sessionPrep(VALID_SP_BODY);
+
+    const agendaSpan = spanLogs.find((l) => l.includes('"span":"session_prep.agenda_generate"'));
+    const parsed = JSON.parse(agendaSpan!);
+    expect(parsed.has_activity_data).toBe(false);
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  F03b: Session Prep — Agenda Prioritization
+// ════════════════════════════════════════════════════════
+
+describe('F03b: Session Prep — Agenda prioritization', () => {
+  it('returns skeleton with stalled module when LMS data has stalled courses', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    (env as any).AI_GATEWAY = createMockGateway({}, false);
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    // Skeleton should include an unblock topic for the stalled module
+    const topics = body.suggested_agenda.map((a: any) => a.topic);
+    expect(topics.some((t: string) => t.includes('Advanced Algorithms') || t.includes('Unblock'))).toBe(true);
+  });
+
+  it('filters out empty/malformed agenda items', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    // LLM returns some empty items mixed in
+    (env as any).AI_GATEWAY = createMockGateway({
+      response: JSON.stringify({
+        agenda: [
+          { topic: '', reason: '', duration_min: null },
+          { topic: 'Good topic', reason: 'Real reason', duration_min: 15 },
+          null,
+          { topic: 'Another topic', reason: 'Another reason', duration_min: 10 },
+        ],
+      }),
+      model_used: 'llama',
+      provider: 'cloudflare',
+      tokens_used: 50,
+      throttle_warning: false,
+    });
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    // Only the two valid items should be present
+    expect(body.suggested_agenda.length).toBe(2);
+    expect(body.suggested_agenda[0].topic).toBe('Good topic');
+    expect(body.suggested_agenda[1].topic).toBe('Another topic');
+  });
+
+  it('caps agenda at 5 items', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+    // LLM returns 7 items
+    (env as any).AI_GATEWAY = createMockGateway({
+      response: JSON.stringify({
+        agenda: Array.from({ length: 7 }, (_, i) => ({
+          topic: `Topic ${i + 1}`,
+          reason: `Reason ${i + 1}`,
+          duration_min: 10 + i,
+        })),
+      }),
+      model_used: 'llama',
+      provider: 'cloudflare',
+      tokens_used: 50,
+      throttle_warning: false,
+    });
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    expect(body.suggested_agenda.length).toBe(5);
+  });
+
+  it('prep_materials avoid duplicate course links', async () => {
+    vi.stubGlobal('fetch', vi.fn((url: string) => {
+      if (url.includes('/learner/profile')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROFILE), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/progress/user')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_SESSION_PROGRESS), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/learner/assessments/summary')) {
+        return Promise.resolve(new Response(JSON.stringify(MOCK_ASSESSMENT_SUMMARY), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    }));
+
+    const res = await sessionPrep(VALID_SP_BODY);
+    const body: any = await res.json();
+
+    // Check for duplicate links
+    const links = body.prep_materials.map((m: any) => m.link);
+    const uniqueLinks = new Set(links);
+    expect(uniqueLinks.size).toBe(links.length);
+  });
+});
