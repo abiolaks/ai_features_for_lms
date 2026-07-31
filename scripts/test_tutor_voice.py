@@ -212,12 +212,23 @@ async def main():
         print(f"  ⚠️  No transcript (silent audio = expected failure)")
 
     if audio_bytes:
-        import tempfile
-        mp3_path = os.path.join(tempfile.gettempdir(), "tutor_voice_output.mp3")
-        with open(mp3_path, "wb") as f:
+        import tempfile, subprocess
+        wav_path = os.path.join(tempfile.gettempdir(), "tutor_voice_output.wav")
+        with open(wav_path, "wb") as f:
             f.write(audio_bytes)
-        print(f"  🔈 Playing audio ({len(audio_bytes)} bytes)...")
-        os.system(f"afplay {mp3_path}")
+        print(f"  🔊 Audio saved: {wav_path} ({len(audio_bytes)} bytes)")
+        print(f"  🔈 Playing...")
+        # Try ffplay first (handles WAV better), fall back to afplay
+        if os.system(f"which ffplay > /dev/null 2>&1") == 0:
+            subprocess.run(["ffplay", "-nodisp", "-autoexit", wav_path],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            # Convert to m4a for afplay
+            m4a_path = wav_path.replace(".wav", ".m4a")
+            subprocess.run(["ffmpeg", "-y", "-i", wav_path, "-c:a", "aac", "-b:a", "128k", m4a_path],
+                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if os.path.exists(m4a_path):
+                os.system(f"afplay {m4a_path}")
     print("=" * 60)
 
 
