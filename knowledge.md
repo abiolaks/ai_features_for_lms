@@ -1288,3 +1288,22 @@ Response shape without quiz data:
 ### Decision (revised)
 
 ~~**Build now, ship with `ai_status: "partial"` and `quiz_scores: null`.**~~ **Build with full quiz data from `assessments/summary`.** The `ai_status` should be `"generated"` from the start.
+
+## F03b: Session Prep — Live Testing Findings (2026-07-31)
+
+### LMS Connectivity
+
+| Endpoint | Status | Notes |
+|----------|--------|-------|
+| `GET /v1/learner/profile?user_id=` | ✅ Works | Requires UUID format for `user_id`; rejects plain strings like `user-42` with 422 |
+| `GET /v1/progress/user?userId=` | ⚠️ 500 on new users | Returns HTML 500 error when user has no enrollments (LMS bug). Requires valid UUID. |
+| `GET /v1/learner/assessments/summary?userId=&organization_id=` | ✅ Works | Returns empty data gracefully; accepts any userId format |
+| `POST AI03 Gateway /generate` | ✅ Works | Auto-provisions new orgs with 100K token budget; returns 429 when exhausted |
+
+### LLM Response Truncation
+
+llama-3.2-3b-instruct occasionally truncates JSON output mid-generation (missing closing `}`). Fixed in `parseLlmJson()` with `balanceBraces()` that counts open/close brackets and appends missing closers. This affects ALL workers using `parseLlmJson`, not just session-prep.
+
+### Test User
+
+Real LMS user UUID: `019f0513-90ba-7170-bf05-8011a0e3f028` ("Unknown User") — profile works, no enrollments, no quiz attempts. Org ID: `7591945d-10ba-4a39-adde-a495c2c9449b` (budget exhausted at 104K/100K, use fresh orgs for testing).
