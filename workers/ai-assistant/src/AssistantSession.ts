@@ -94,6 +94,7 @@ export class AssistantSession extends DurableObject<Env> {
           answer: "I couldn't find any relevant content across the platform for your question. Try rephrasing or asking about specific topics.",
           citations: [],
           suggested_courses: [],
+          history_length: history.length + 2,
         }, 200, origin);
       }
 
@@ -357,15 +358,13 @@ function buildAssistantPrompt(
 /**
  * Parse course suggestions from the LLM response.
  * Looks for "### Suggested Courses" section and matches titles
- * against the catalogue. Falls back to keyword matching if no
- * structured section is found.
+ * against the catalogue. Falls back to extracting course names
+ * from markdown patterns when the catalogue is unavailable.
  */
 function parseCourseSuggestions(
   text: string,
   catalogue: CatalogueCourse[],
 ): SuggestedCourse[] {
-  if (catalogue.length === 0) return [];
-
   // ── Try to find structured "### Suggested Courses" section ──
   const sectionMatch = text.match(/###\s*Suggested\s*Courses?\s*\n([\s\S]*?)(?=\n###|\n---|$)/i);
   if (sectionMatch) {
@@ -377,18 +376,30 @@ function parseCourseSuggestions(
 
     const suggestions: SuggestedCourse[] = [];
     for (const line of lines) {
-      // Try to match: "Course Title — reason" or "Course Title: reason" or "- **Course Title** — reason"
       const cleaned = line.replace(/\*\*/g, "");
+
+      // Pattern: [Course Title [course: id]] — reason or [Course Title [course: id]]: reason
+      const bracketMatch = cleaned.match(/\[([^\]]+?)\s*\[course:\s*([^\]]+?)\]\](.*)/);
+      if (bracketMatch) {
+        const title = bracketMatch[1].trim();
+        const courseId = bracketMatch[2].trim();
+        const reason = bracketMatch[3].replace(/^[\s—:]+/, "").trim();
+        suggestions.push({ title, course_id: courseId, reason: reason || "Relevant to your question" });
+        continue;
+      }
+
+      // Pattern: Course Title — reason or Course Title: reason
       const sep = cleaned.includes("—") ? "—" : cleaned.includes(":") ? ":" : null;
       if (sep) {
         const [titlePart, reason] = cleaned.split(sep).map((s) => s.trim());
-        const match = findCatalogMatch(titlePart, catalogue);
+        // Strip trailing course IDs in brackets
+        const titleClean = titlePart.replace(/\[.*?\]/g, "").trim();
+        const match = catalogue.length > 0 ? findCatalogMatch(titleClean, catalogue) : null;
         if (match) {
-          suggestions.push({
-            title: match.title,
-            course_id: match.id,
-            reason: reason || "",
-          });
+          suggestions.push({ title: match.title, course_id: match.id, reason: reason || "" });
+        } else if (catalogue.length === 0) {
+          // No catalogue — trust the LLM's course title
+          suggestions.push({ title: titleClean, course_id: undefined, reason: reason || "Relevant to your question" });
         }
       }
     }
@@ -396,21 +407,20 @@ function parseCourseSuggestions(
   }
 
   // ── Fallback: keyword match course titles in the full response ──
-  const suggestions: SuggestedCourse[] = [];
-  const lowerText = text.toLowerCase();
-  for (const course of catalogue) {
-    if (suggestions.length >= 3) break;
-    if (lowerText.includes(course.title.toLowerCase())) {
-      // Don't duplicate
-      if (suggestions.some((s) => s.title === course.title)) continue;
-      suggestions.push({
-        title: course.title,
-        course_id: course.id,
-        reason: "Matches your interest",
-      });
+  if (catalogue.length > 0) {
+    const suggestions: SuggestedCourse[] = [];
+    const lowerText = text.toLowerCase();
+    for (const course of catalogue) {
+      if (suggestions.length >= 3) break;
+      if (lowerText.includes(course.title.toLowerCase())) {
+        if (suggestions.some((s) => s.title === course.title)) continue;
+        suggestions.push({ title: course.title, course_id: course.id, reason: "Matches your interest" });
+      }
     }
+    return suggestions;
   }
-  return suggestions;
+
+  return [];
 }
 
 function findCatalogMatch(title: string, catalogue: CatalogueCourse[]): CatalogueCourse | undefined {

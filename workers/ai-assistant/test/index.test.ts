@@ -143,6 +143,7 @@ beforeAll(() => {
                 answer: "I couldn't find any relevant content across the platform for your question. Try rephrasing or asking about specific topics.",
                 citations: [],
                 suggested_courses: [],
+                history_length: history.length + 2,
               });
             }
 
