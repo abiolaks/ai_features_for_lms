@@ -1063,16 +1063,13 @@ describe('Voice STT', () => {
 //  Voice TTS (text-to-speech output over WebSocket)
 // ════════════════════════════════════════════════════════
 
-// Helper: create a mock TTS Response that returns chunked audio bytes
-function mockTTSResponse(): Response {
-  const audioBytes = new Uint8Array(8192); // 8KB of mock audio
+// Helper: create a mock TTS response — melotts returns { audio: "base64..." }
+function mockTTSResponse(): { audio: string } {
+  const audioBytes = new Uint8Array(8192);
   for (let i = 0; i < audioBytes.length; i++) {
     audioBytes[i] = i % 256;
   }
-  return new Response(audioBytes.buffer, {
-    status: 200,
-    headers: { 'Content-Type': 'audio/mpeg' },
-  });
+  return { audio: btoa(String.fromCharCode(...audioBytes)) };
 }
 
 // Helper: set up DO stub with TTS support after text pipeline
@@ -1134,26 +1131,18 @@ function setupTTSStub(ttsShouldFail = false) {
     }
 
     try {
-      const ttsResp = await (env as any).AI.run('@cf/deepgram/aura-1', { text: 'Test answer', speaker: 'angus' }, { returnRawResponse: true });
+      const ttsResult = await (env as any).AI.run('@cf/myshell-ai/melotts', { prompt: 'Test answer', lang: 'en' });
 
-      // Read audio response and chunk it
-      if (ttsResp.ok && ttsResp.body) {
-        const reader = ttsResp.body.getReader();
-        let index = 0;
-        while (true) {
-          const { done, value } = await reader.read();
-          if (value && value.length > 0) {
-            // Split into 4KB chunks
-            for (let i = 0; i < value.length; i += 4096) {
-              const chunk = value.slice(i, i + 4096);
-              _ws.send(JSON.stringify({
-                type: 'audio',
-                data: btoa(String.fromCharCode(...chunk)),
-                chunk_index: index++,
-              }));
-            }
-          }
-          if (done) break;
+      if (ttsResult?.audio) {
+        const audioBytes = Uint8Array.from(atob(ttsResult.audio), (c: string) => c.charCodeAt(0));
+        let idx = 0;
+        for (let i = 0; i < audioBytes.length; i += 4096) {
+          const chunk = audioBytes.slice(i, i + 4096);
+          _ws.send(JSON.stringify({
+            type: 'audio',
+            data: btoa(String.fromCharCode(...chunk)),
+            chunk_index: idx++,
+          }));
         }
       }
       _ws.send(JSON.stringify({ type: 'tts_done' }));
@@ -1178,7 +1167,7 @@ describe('Voice TTS', () => {
         if (model === '@cf/openai/whisper') {
           return { text: 'What is a variable?' };
         }
-        if (model === '@cf/deepgram/aura-1') {
+        if (model === '@cf/myshell-ai/melotts') {
           return mockTTSResponse();
         }
         return { data: [new Array(1024).fill(0.1)] };
@@ -1226,7 +1215,7 @@ describe('Voice TTS', () => {
         if (model === '@cf/openai/whisper') {
           return { text: 'What is a variable?' };
         }
-        if (model === '@cf/deepgram/aura-1') {
+        if (model === '@cf/myshell-ai/melotts') {
           throw new Error('TTS model unavailable');
         }
         return { data: [new Array(1024).fill(0.1)] };
@@ -1261,7 +1250,7 @@ describe('Voice TTS', () => {
         if (model === '@cf/openai/whisper') {
           return DEFAULT_STT_RESPONSE;
         }
-        if (model === '@cf/deepgram/aura-1') {
+        if (model === '@cf/myshell-ai/melotts') {
           return mockTTSResponse();
         }
         return DEFAULT_AI_RESPONSE;

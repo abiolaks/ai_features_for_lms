@@ -126,6 +126,7 @@ async def voice_ask(
         transcript = ""
         answer = ""
         citation_count = 0
+        audio_chunks: list[bytes] = []
 
         while True:
             msg = await ws.recv()
@@ -151,23 +152,30 @@ async def voice_ask(
                 answer += str(data["text"])
 
             elif t == "audio":
-                print(f"\n  🔊 audio chunk {data.get('chunk_index','?')} ({len(data.get('data',''))} b64 chars)", end="")
+                chunk_bytes = base64.b64decode(data["data"])
+                audio_chunks.append(chunk_bytes)
+                print(f"\n  🔊 audio chunk {data.get('chunk_index','?')} ({len(chunk_bytes)} bytes)", end="")
 
             elif t == "tts_done":
-                print("\n  ✅ TTS complete")
+                audio_bytes = b"".join(audio_chunks)
+                print(f"\n  ✅ TTS complete ({len(audio_bytes)} bytes, {len(audio_chunks)} chunks)")
+                return transcript, answer, audio_bytes
 
             elif t == "tts_error":
                 print(f"\n  ⚠️ TTS error: {data['error']}")
+                return transcript, answer, b""
 
             elif t == "done":
                 print()
                 print("-" * 60)
                 print(f"  ✅ Done | citations: {citation_count} | history: {data.get('history_length', '?')}")
-                return transcript, answer
+                # Don't return yet — TTS audio chunks come after done
+                answer = data.get('answer', answer)
 
             elif t == "error":
                 print(f"\n  ❌ ERROR: {data['error']}")
-                return transcript, answer
+                audio_bytes = b"".join(audio_chunks)
+                return transcript, answer, audio_bytes
 
 
 async def main():
@@ -193,7 +201,7 @@ async def main():
             audio = base64.b64encode(f.read()).decode("ascii")
         print(f"  📁 Loaded WAV from: {mode}")
 
-    transcript, answer = await voice_ask(audio_b64=audio)
+    transcript, answer, audio_bytes = await voice_ask(audio_b64=audio)
 
     print()
     print("=" * 60)
@@ -202,6 +210,14 @@ async def main():
         print(f"     Speech → \"{transcript}\" → answer ({len(answer)} chars)")
     else:
         print(f"  ⚠️  No transcript (silent audio = expected failure)")
+
+    if audio_bytes:
+        import tempfile
+        mp3_path = os.path.join(tempfile.gettempdir(), "tutor_voice_output.mp3")
+        with open(mp3_path, "wb") as f:
+            f.write(audio_bytes)
+        print(f"  🔈 Playing audio ({len(audio_bytes)} bytes)...")
+        os.system(f"afplay {mp3_path}")
     print("=" * 60)
 
 

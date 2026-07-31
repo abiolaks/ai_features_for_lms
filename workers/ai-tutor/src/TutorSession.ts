@@ -12,7 +12,7 @@ import { startSpan, setAttr, endSpan } from "../../shared/observability";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
 const STT_MODEL = "@cf/openai/whisper";
-const TTS_MODEL = "@cf/deepgram/aura-1";  // matches DEFAULT_PERSONA.voice_id
+const TTS_MODEL = "@cf/myshell-ai/melotts";
 const SCORE_THRESHOLD = 0.05;  // lowered to catch more chunks for lesson-level filtering
 const TOP_K = 50;  // increased from 15 — gives post-filter more candidates to match
 const EXCERPT_MAX_LEN = 2000;
@@ -471,44 +471,28 @@ export class TutorSession extends DurableObject<Env> {
     let chunkCount = 0;
 
     try {
-      const ttsResponse = await this.env.AI.run(
-        TTS_MODEL,
-        { text, speaker: "angus" },
-        { returnRawResponse: true }
-      ) as Response;
+      const ttsResult = await this.env.AI.run(TTS_MODEL, {
+        prompt: text,
+        lang: "en",
+      }) as { audio: string };
 
-      if (!ttsResponse.ok || !ttsResponse.body) {
-        throw new Error("TTS response invalid");
+      if (!ttsResult?.audio) {
+        throw new Error("TTS returned no audio");
       }
 
-      const reader = ttsResponse.body.getReader();
-      const CHUNK_SIZE = 4096; // 4KB chunks for streaming
-      let buffer = new Uint8Array(0);
+      // Decode base64 audio and chunk it for streaming
+      const audioBytes = Uint8Array.from(atob(ttsResult.audio), c => c.charCodeAt(0));
+      const CHUNK_SIZE = 4096;
       let index = 0;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (value) {
-          const combined = new Uint8Array(buffer.length + value.length);
-          combined.set(buffer);
-          combined.set(value, buffer.length);
-          buffer = combined;
-        }
-
-        while (buffer.length >= CHUNK_SIZE || (done && buffer.length > 0)) {
-          const size = Math.min(CHUNK_SIZE, buffer.length);
-          const chunk = buffer.slice(0, size);
-          buffer = buffer.slice(size);
-          totalBytes += chunk.length;
-          chunkCount++;
-
-          yield {
-            data: btoa(String.fromCharCode(...chunk)),
-            chunk_index: index++,
-          };
-        }
-
-        if (done) break;
+      for (let i = 0; i < audioBytes.length; i += CHUNK_SIZE) {
+        const chunk = audioBytes.slice(i, i + CHUNK_SIZE);
+        totalBytes += chunk.length;
+        chunkCount++;
+        yield {
+          data: btoa(String.fromCharCode(...chunk)),
+          chunk_index: index++,
+        };
       }
 
       setAttr(span, "status", "success");
