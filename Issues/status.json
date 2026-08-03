@@ -19,21 +19,21 @@
       "status": "complete",
       "title": "Content Indexing (Stream captions + Vectorize)",
       "deployed": "https://ai-indexing.yomi-alarape.workers.dev",
-      "tests": "17/17",
+      "tests": "22/22",
       "github": 8
     },
     "AI04": {
       "status": "complete",
-      "title": "Tutor \u2014 Grounded Q&A",
+      "title": "Tutor \u2014 Grounded Q&A + Voice (STT/TTS)",
       "deployed": "https://ai-tutor.yomi-alarape.workers.dev",
-      "tests": "15/15",
+      "tests": "33/33",
       "github": 10
     },
     "AI08": {
       "status": "complete",
       "title": "Post-Quiz Insights",
       "deployed": "https://ai-insights.yomi-alarape.workers.dev",
-      "tests": "30/30",
+      "tests": "62/62",
       "github": 6
     },
     "AI06": {
@@ -57,8 +57,10 @@
       "github": 7
     },
     "F06": {
-      "status": "pending",
+      "status": "complete",
       "title": "Platform Assistant",
+      "deployed": "https://ai-assistant.yomi-alarape.workers.dev",
+      "tests": "37/37",
       "phase": 2,
       "github": null
     },
@@ -82,25 +84,33 @@
     },
     "F03a": {
       "title": "Skill-Gap Analysis",
-      "github": 13,
-      "status": "pending",
-      "phase": 2
+      "status": "complete",
+      "deployed": "https://ai-mentor.yomi-alarape.workers.dev",
+      "tests": "29/29",
+      "phase": 2,
+      "github": 13
     },
     "F03b": {
-      "status": "pending",
+      "status": "complete",
       "title": "Session Prep Insights",
+      "deployed": "https://ai-insights.yomi-alarape.workers.dev",
+      "tests": "62/62 (combined with AI08)",
       "phase": 2,
       "github": null
     },
     "F04a": {
-      "status": "pending",
+      "status": "complete",
       "title": "Bottleneck Detection",
+      "deployed": "https://ai-bottlenecks.yomi-alarape.workers.dev",
+      "tests": "37/37",
       "phase": 2,
       "github": null
     },
     "F04b": {
-      "status": "pending",
+      "status": "complete",
       "title": "Engagement Monitoring",
+      "deployed": "https://ai-engagement.yomi-alarape.workers.dev",
+      "tests": "37/37",
       "phase": 2,
       "github": null
     }
@@ -135,6 +145,6 @@
   "cut": [
     "AI05 \u2014 LMS already has richer learner profiles"
   ],
-  "completed_slices": 6,
-  "pending_slices": 9
+  "completed_slices": 12,
+  "pending_slices": 3
 }

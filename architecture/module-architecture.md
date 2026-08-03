@@ -14,6 +14,8 @@
 | `ai-paths` | `ai-paths.yomi-alarape.workers.dev` | ✅ Live | Service binding to ai-gateway |
 | `ai-insights` | `ai-insights.yomi-alarape.workers.dev` | ✅ Live | 30/30 tests, quiz analysis + review links |
 | `ai-recommendations` | `ai-recommendations.yomi-alarape.workers.dev` | ✅ Live | 23/23 tests, enhance + engine tiers, KV cache |
+| `ai-assistant` | `ai-assistant.yomi-alarape.workers.dev` | ✅ Live | 37/37 tests, DO (SQLite), RAG retrieval, course suggestions |
+| `ai-mentor` | `mentor.yomi-alarape.workers.dev` | ✅ Live | 29/29 tests, skill-gap analysis, service binding to ai-gateway |
 | `ai-dashboard` | `ai-dashboard.pages.dev` | ⏳ Built | Pages static site, 6 worker cards |
 
 ---
@@ -352,4 +354,71 @@ The shared client is at `workers/shared/fetch-lms.ts`.
 | ai-tutor | `/v1/lessons/{id}` (citation metadata) |
 | ai-paths | `/v1/learner/profile`, `/v1/catalog`, `/v1/progress/user` |
 | ai-recommendations | `/v1/courses/recommendations`, `/v1/learner/profile`, `/v1/catalog`, `/v1/progress/user` |
-| ai-insights | `/v1/learner/assessments/{id}`, `/v1/learner/assessments/attempts/{id}`, `/v1/progress/user`, `/v1/modules/{id}/lessons` |
+| ai-insights | `/v1/learner/assessments/{id}`, `/v1/learner/assessments/attempts/{id}`, `/v1/progress/user`, `/v1/modules/{id}/lessons`, `/v1/learner/assessments/summary` |
+| ai-assistant | `/v1/catalog`, `/v1/learner/profile` |
+| ai-mentor | `/v1/learner/profile`, `/v1/catalog`, `/v1/progress/user` |
+
+---
+
+## Phase 2 Workers
+
+### F03a: Skill-Gap Analysis (ai-mentor)
+
+`GET /mentor/skill-gap?learner_id=&org_id=`
+
+```
+LMS Frontend
+GET /mentor/skill-gap
+  ↓
+ai-mentor Worker:
+  1. Fetch learner profile → preferences for skills/goals
+  2. Fetch catalogue → course prerequisites + estimated_hours
+  3. Fetch progress → exclude completed courses
+  4. Map learner skills against catalogue requirements
+  5. Call ai-gateway → structured gap analysis
+  6. Return { gaps, summary } with courses_available + estimated_hours
+```
+
+**Degraded:** Empty profile → suggests adding skills. Gateway down → keyword matching.
+
+### F03b: Session Prep Insights (ai-insights)
+
+`POST /insights/mentor/session-prep`
+
+```
+LMS Frontend
+POST /insights/mentor/session-prep { learner_id, mentor_id, org_id }
+  ↓
+ai-insights Worker:
+  1. Fetch profile + progress + assessment summary from LMS
+  2. Identify: stalled modules (<30% progress), lowest quiz topics
+  3. Build prompt with progress + quiz data
+  4. Call ai-gateway → 3-topic agenda prioritized by urgency
+  5. Return { recent_activity, suggested_agenda, prep_materials }
+```
+
+**Degraded:** Skeleton agenda when no LMS data or gateway down.
+
+### F06: Platform Assistant (ai-assistant)
+
+`POST /assistant/ask`, `POST /assistant/clear`
+
+```
+  Fetch Handler:
+    POST /assistant/ask   ──▶ DO.ask(body)    (multi-turn)
+    POST /assistant/clear ──▶ DO.clearHistory()
+                              │
+  AssistantSession Durable Object (one per learner):
+    1. Load history from SQLite (MAX 20 msgs)
+    2. Embed question → query Vectorize (no lesson filter — all courses)
+    3. Fetch catalogue from LMS
+    4. Build prompt: [History] + [Content] + [Catalogue]
+    5. Call ai-gateway → answer + course suggestions
+    6. Save exchange to SQLite
+
+  Differences from Tutor:
+  - Course scope (not lesson-scoped)
+  - Returns suggested_courses
+  - One DO per learner across ALL courses (not per course)
+  - Prompt injection defense
+```

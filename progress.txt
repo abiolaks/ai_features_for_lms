@@ -1,24 +1,23 @@
 # Project Progress — AI Features for LMS
 
-## Complete (6/7)
+## Phase 1 — 7/7 Complete (All Deployed)
 - [x] AI03 LLM Gateway — deployed, 14/14 tests
-- [x] AI01 Content Indexing — deployed, 16/16 tests
-- [x] AI04 Grounded Tutor — deployed, 15/15 tests
-- [x] AI08 Post-Quiz Insights — deployed, 30/30 tests
+- [x] AI01 Content Indexing — deployed, 22/22 tests
+- [x] AI04 Grounded Tutor + Voice (STT/TTS) — deployed, 33/33 tests
+- [x] AI08 Post-Quiz Insights — deployed, 62/62 tests
 - [x] AI06 Learning Paths — deployed, 20/20 tests
 - [x] AI07 Recommendations — deployed, 23/23 tests
-- [x] AI07b Fallback Engine — baked into AI07, 0 dedicated tests
+- [x] AI07b Fallback Engine — baked into AI07
+- [ ] AI13 Demo Dashboard — built, pending deploy (needs Pages deploy)
 
-## Pending (1/7 Phase 1)
-- [ ] AI13 Demo Dashboard — built, pending deploy (needs CLOUDFLARE_API_TOKEN with Pages write)
-
-## Phase 2 (8 deployable slices)
+## Phase 2 — 4/8 Complete, 1 Built
 - [x] F03a Skill-Gap Analysis — deployed (ai-mentor), 29/29 tests
-- [ ] F03b Session Prep Insights
-- [ ] F04a Bottleneck Detection
-- [ ] F04b Engagement Monitoring
+- [x] F03b Session Prep Insights — deployed (ai-insights), part of 62/62 tests
+- [x] F06 Platform Assistant — deployed (ai-assistant), 37/37 tests
+- [x] Voice Tutor (STT + TTS + pipeline) — deployed (ai-tutor), part of 33/33 tests
+- [x] F04a Bottleneck Detection — deployed, 37/37 tests
+- [x] F04b Engagement Monitoring — deployed (ai-engagement), 37/37 tests
 - [ ] F05 Admin Analytics Narratives
-- [ ] F06 Platform Assistant
 - [ ] F07 Question Generation
 - [ ] F08 Quality Checks
 
@@ -26,9 +25,13 @@
 - [ ] F02 Mentor Matching — blocked on Mentor Directory data product
 - [ ] F09 Assessment Approval Workflow — split: AI (API) + LMS (UI)
 
+## Test Summary
+- Running: ai-gateway(14) ai-indexing(22) ai-tutor(33) ai-insights(62) ai-paths(20) ai-recommendations(23) ai-assistant(37) ai-mentor(29) ai-bottlenecks(37) mentor(21) = 298 total
+- All passing ✅
+
 ## Infrastructure
-- [x] Vectorize `lms-lessons` — 1024-dim cosine, 14/16 videos indexed
-- [x] D1 `lms-platform` — org_budgets table (token tracking)
+- [x] Vectorize `lms-lessons` — 1024-dim cosine, 16/16 videos + 40 PDFs indexed
+- [x] D1 `lms-platform` — org_budgets table (token tracking + auto-provision)
 - [x] KV `LMS_CACHE` — 24h TTL recommendation cache
 - [x] R2 `lms-content-staging` — PDF/PPTX staging
 - [x] Queue `indexing-jobs` — async content indexing

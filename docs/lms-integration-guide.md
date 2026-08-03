@@ -190,7 +190,7 @@ All endpoints return `{ "success": true, "data": ... }`. Auth via `X-API-Key: <L
 }
 ```
 
-> ⚠️ **Gap:** Add `goals`, `experience_level`, `skills`, `interests` fields (or a `/v1/learner/preferences` endpoint) for better personalization.
+> ✅ **Resolved:** `GET /api/v1/learner/preferences` exists with `knownSkills`, `interests`, `learningGoal`, `skillLevel`, `preferredCategory`.
 
 ### GET /api/v1/catalog
 
@@ -211,7 +211,7 @@ Scoped to authenticated org. Support `?per_page=100` for full catalogue.
 }
 ```
 
-> ⚠️ **Gap:** No `prerequisites` field on courses. Learning paths may suggest courses in wrong order without it.
+> ✅ **Resolved:** `CourseResource` includes `prerequisites` field — learning paths can order courses correctly.
 
 ### GET /api/v1/progress/user?userId=<id>
 
