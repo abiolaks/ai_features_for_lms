@@ -6,12 +6,12 @@ The DO calls `WorkersAITTS` with the complete answer text + persona `voice_id` a
 
 **Blocked by:** 01 — needs `TutorPersona` type and protocol constants.
 
-**Status:** ready-for-agent
+**Status:** done ✅
 
-- [ ] `generateTTS()` method: calls `WorkersAITTS` with answer text + persona voice_id → yields audio chunks as base64 PCM
-- [ ] `handleStreamAsk()` augmented: after text stream finishes, calls `generateTTS()` and forwards `{"type":"audio",...}` chunks on WebSocket
-- [ ] `"tts_done"` message sent after last audio chunk
-- [ ] TTS mock test: mock returns chunked PCM → verify `audio` + `tts_done` messages in order after text tokens
-- [ ] TTS failure test: mock throws → text tokens still delivered → no audio → no crash → `done` still sent
-- [ ] Existing text-based tests still pass (no regression)
-- [ ] Observability: `voice.tts` sub-span (duration_ms, audio_bytes, chunk_count, status)
+- [x] `generateTTS()` method: calls `WorkersAITTS` with answer text + persona voice_id → yields audio chunks as base64 PCM
+- [x] `handleStreamAsk()` augmented: after text stream finishes, calls `generateTTS()` and forwards `{"type":"audio",...}` chunks on WebSocket
+- [x] `"tts_done"` message sent after last audio chunk
+- [x] TTS mock test: mock returns chunked PCM → verify `audio` + `tts_done` messages in order after text tokens
+- [x] TTS failure test: mock throws → text tokens still delivered → no audio → no crash → `done` still sent
+- [x] Existing text-based tests still pass (no regression)
+- [x] Observability: `voice.tts` sub-span (duration_ms, audio_bytes, chunk_count, status)

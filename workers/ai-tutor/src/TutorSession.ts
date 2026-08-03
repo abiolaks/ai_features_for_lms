@@ -8,8 +8,11 @@
 
 import { DurableObject } from "cloudflare:workers";
 import { json } from "../../shared/cors";
+import { startSpan, setAttr, endSpan } from "../../shared/observability";
 
 const EMBEDDING_MODEL = "@cf/baai/bge-large-en-v1.5";
+const STT_MODEL = "@cf/openai/whisper";
+const TTS_MODEL = "@cf/myshell-ai/melotts";
 const SCORE_THRESHOLD = 0.05;  // lowered to catch more chunks for lesson-level filtering
 const TOP_K = 50;  // increased from 15 — gives post-filter more candidates to match
 const EXCERPT_MAX_LEN = 2000;
@@ -27,6 +30,15 @@ interface AskRequest {
   origin?: string | null;  // set by fetch handler for CORS
 }
 
+interface VoiceAskRequest {
+  audio: string;  // base64-encoded WAV audio
+  lesson_id: string;
+  course_id: string;
+  org_id: string;
+  expand_scope?: "lesson" | "module" | "course";
+  module_id?: string;
+}
+
 interface Citation {
   lesson_title: string;
   excerpt: string;
@@ -40,6 +52,37 @@ interface MessageRow {
   content: string;
   [key: string]: any;  // satisfy SqlStorageValue constraint
 }
+
+/**
+ * Tutor persona — defines the voice and personality of the AI tutor.
+ * Ticket 02 (TTS) reuses this for text-to-speech output.
+ */
+interface TutorPersona {
+  name: string;
+  voice_id: string;
+  portrait_image_url: string;
+  tone_profile: string;
+}
+
+/**
+ * Available interaction modes for the tutor session.
+ * - text-only:  traditional text Q&A (backward compat)
+ * - voice-full: full voice pipeline (STT in + TTS out, ticket 01+02)
+ * - stt-text-out: voice input, text output (ticket 01)
+ * - text-tts-out: text input, voice output (ticket 02)
+ */
+type InteractionMode = "text-only" | "voice-full" | "stt-text-out" | "text-tts-out";
+
+/**
+ * Hardcoded default persona — real config from admin UI is out of scope.
+ * Reused by ticket 02 (TTS) for voice output.
+ */
+const DEFAULT_PERSONA: TutorPersona = {
+  name: "Aura",
+  voice_id: "@cf/deepgram/aura-1",
+  portrait_image_url: "",
+  tone_profile: "Warm, patient, and encouraging — adapts to the learner's pace",
+};
 
 interface Env {
   AI: any;
@@ -80,6 +123,14 @@ export class TutorSession extends DurableObject<Env> {
 
       this.ctx.acceptWebSocket(server);
 
+      // Send mode + persona on connect (no webSocketOpen in DO API)
+      server.send(JSON.stringify({
+        type: "mode",
+        modes: ["text-only", "stt-text-out"],
+        active_mode: "stt-text-out",
+        persona: DEFAULT_PERSONA,
+      }));
+
       return new Response(null, {
         status: 101,
         webSocket: client,
@@ -103,6 +154,9 @@ export class TutorSession extends DurableObject<Env> {
     switch (msg.type) {
       case "ask":
         await this.handleStreamAsk(ws, msg as AskRequest & { type: string });
+        break;
+      case "ask_voice":
+        await this.handleVoiceAsk(ws, msg as VoiceAskRequest & { type: string });
         break;
       case "cancel":
         // TODO: implement stream cancellation
@@ -273,8 +327,192 @@ export class TutorSession extends DurableObject<Env> {
         answer: this.currentAnswer,
         history_length: history.length + 2,
       }));
+
+      // ── TTS: convert answer to speech (non-fatal) ──
+      if (this.currentAnswer && this.currentAnswer.length > 0) {
+        try {
+          // Clean markdown and limit length — melotts struggles with formatting & long text
+          const cleanText = this.currentAnswer
+            .replace(/\*\*/g, "")        // strip bold
+            .replace(/\*/g, "")          // strip italic
+            .replace(/`{1,3}/g, "")       // strip code
+            .replace(/^[#>-]\s/gm, "")   // strip headings, blockquotes, lists
+            .replace(/^\d+\.\s/gm, "")   // strip numbered lists
+            .replace(/\n{2,}/g, ". ")    // collapse newlines
+            .replace(/\n/g, " ")         // single newlines to space
+            .substring(0, 2000);          // limit to 2000 chars
+
+          for await (const chunk of this.generateTTS(cleanText)) {
+            ws.send(JSON.stringify({
+              type: "audio",
+              data: chunk.data,
+              chunk_index: chunk.chunk_index,
+            }));
+          }
+          ws.send(JSON.stringify({ type: "tts_done" }));
+        } catch (err: any) {
+          // TTS failure is non-fatal — text already delivered to client
+          ws.send(JSON.stringify({ type: "tts_error", error: err.message }));
+        }
+      }
     } catch (err: any) {
       ws.send(JSON.stringify({ type: "error", error: err.message }));
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  Voice ask (STT → text pipeline)
+  // ═══════════════════════════════════════════════════════
+
+  private async handleVoiceAsk(ws: WebSocket, body: VoiceAskRequest & { type: string }) {
+    const span = startSpan("voice.ask");
+    setAttr(span, "org_id", body.org_id);
+    setAttr(span, "modality", "stt-text-out");
+
+    try {
+      // ── Validate audio ──
+      if (!body.audio || body.audio.length === 0) {
+        setAttr(span, "error", "empty_audio");
+        endSpan(span);
+        ws.send(JSON.stringify({ type: "error", error: "No audio provided" }));
+        return;
+      }
+
+      // ── STT: base64 → raw bytes → Workers AI Whisper ──
+      const sttSpan = startSpan("voice.stt");
+      let transcript: string;
+      try {
+        const audioBytes = Uint8Array.from(atob(body.audio), c => c.charCodeAt(0));
+
+        // Whisper accepts raw audio file bytes (WAV, MP3, etc.) — not decoded PCM.
+        // Pass the raw bytes as a number array (values 0-255).
+        const sttResult = await this.env.AI.run(STT_MODEL, {
+          audio: [...audioBytes],
+        });
+        transcript = (sttResult as any).text || "";
+
+        setAttr(sttSpan, "transcript_length", transcript.length);
+        setAttr(sttSpan, "status", "success");
+      } catch (err: any) {
+        setAttr(sttSpan, "status", "failed");
+        setAttr(sttSpan, "error", err.message);
+        endSpan(sttSpan);
+        throw err;
+      }
+      endSpan(sttSpan);
+
+      // ── Send transcript to client ──
+      ws.send(JSON.stringify({ type: "transcript", text: transcript }));
+
+      // ── STT error correction: LLM fixes mis-heard words ──
+      const correctSpan = startSpan("voice.correct");
+      let question = transcript;
+      try {
+        const correctResp = await this.env.AI_GATEWAY.fetch(
+          new Request("https://ai-gateway/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [{
+                role: "user",
+                content: [
+                  "Correct any speech-to-text errors in this transcript. ",
+                  "The user is asking about AI, business, technology, or course material. ",
+                  "Fix obvious mis-hearings (e.g. 'gentick wolf' → 'agentic workflow', 'Gira' → 'Jira'). ",
+                  "Return ONLY the corrected question — no explanation, no preamble. ",
+                  `Transcript: ${transcript}`,
+                ].join(""),
+              }],
+              tier: "standard",
+              org_id: body.org_id,
+            }),
+          })
+        );
+
+        if (correctResp.ok) {
+          const corrected = await correctResp.json() as any;
+          const correctedText = corrected.response?.trim() || transcript;
+          // Only use correction if it's substantially different and not empty
+          if (correctedText && correctedText.length > 2 && correctedText !== transcript) {
+            question = correctedText;
+            ws.send(JSON.stringify({ type: "corrected", text: question }));
+            setAttr(correctSpan, "corrected", true);
+          } else {
+            setAttr(correctSpan, "corrected", false);
+          }
+        } else {
+          setAttr(correctSpan, "corrected", false);
+        }
+        setAttr(correctSpan, "status", "success");
+      } catch (err: any) {
+        setAttr(correctSpan, "status", "failed");
+        setAttr(correctSpan, "error", err.message);
+      }
+      endSpan(correctSpan);
+
+      // ── Delegate to text pipeline with corrected question ──
+      const askBody: AskRequest = {
+        question,
+        lesson_id: body.lesson_id,
+        course_id: body.course_id,
+        org_id: body.org_id,
+        expand_scope: body.expand_scope,
+        module_id: body.module_id,
+      };
+      await this.handleStreamAsk(ws, { ...askBody, type: "ask" });
+
+      setAttr(span, "status", "success");
+    } catch (err: any) {
+      setAttr(span, "status", "failed");
+      setAttr(span, "error", err.message);
+      ws.send(JSON.stringify({ type: "error", error: `Voice error: ${err.message}` }));
+    }
+    endSpan(span);
+  }
+
+  // ═══════════════════════════════════════════════════════
+  //  TTS: text-to-speech output (ticket 02)
+  // ═══════════════════════════════════════════════════════
+
+  /**
+   * Generate TTS audio chunks from answer text using the persona's voice.
+   * Yields base64-encoded audio chunks to stream over WebSocket.
+   */
+  private async *generateTTS(text: string): AsyncGenerator<{ data: string; chunk_index: number }> {
+    const span = startSpan("voice.tts");
+    let totalBytes = 0;
+    let chunkCount = 0;
+
+    try {
+      const ttsResult = await this.env.AI.run(TTS_MODEL, {
+        prompt: text,
+        lang: "en",
+      }) as { audio: string };
+
+      if (!ttsResult?.audio) {
+        throw new Error("TTS returned no audio");
+      }
+
+      // Decode base64 audio and chunk it for streaming
+      const audioBytes = Uint8Array.from(atob(ttsResult.audio), c => c.charCodeAt(0));
+      const CHUNK_SIZE = 4096;
+      let index = 0;
+
+      for (let i = 0; i < audioBytes.length; i += CHUNK_SIZE) {
+        const chunk = audioBytes.slice(i, i + CHUNK_SIZE);
+        totalBytes += chunk.length;
+        chunkCount++;
+        yield {
+          data: btoa(String.fromCharCode(...chunk)),
+          chunk_index: index++,
+        };
+      }
+
+      setAttr(span, "status", "success");
+    } finally {
+      setAttr(span, "audio_bytes", totalBytes);
+      setAttr(span, "chunk_count", chunkCount);
+      endSpan(span);
     }
   }
 
