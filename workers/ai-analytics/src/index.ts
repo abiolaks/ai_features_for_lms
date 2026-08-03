@@ -657,13 +657,13 @@ function parseNarrative(
     for (let i = 0; i < parsed.highlights.length && i < computedHighlights.length; i++) {
       const item = parsed.highlights[i];
       if (item.likely_cause && !computedHighlights[i].likely_cause) {
-        computedHighlights[i].likely_cause = sanitize(item.likely_cause);
+        computedHighlights[i].likely_cause = sanitize(item.likely_cause, 800);
       }
     }
   }
 
   return {
-    summary: sanitize(parsed.summary),
+    summary: sanitize(parsed.summary, 800),
     parsed: true,
   };
 }
@@ -672,10 +672,7 @@ function parseNarrative(
 //  Helpers
 // ════════════════════════════════════════════════════════
 
-function sanitize(text: string | undefined): string {
-  if (!text) return '';
-  return text.replace(/^["']+|["']+$/g, '').trim().slice(0, 800);
-}
+import { sanitize } from '../../shared/sanitize';
 
 function buildSkeletonSummary(metrics: Metrics, highlights: Highlight[]): string {
   const trendWord = metrics.engagement_trend === 'up' ? 'growing' :

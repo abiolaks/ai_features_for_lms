@@ -473,9 +473,9 @@ function parseBottlenecks(
       actual: raw.actual,
       affected_learners: raw.affected_learners,
       severity,
-      finding: sanitize(item.finding) || `Completion time for ${raw.module} exceeds expectations.`,
-      suggestion: sanitize(item.suggestion) || `Review ${raw.module} content for improvement opportunities.`,
-      rationale: sanitize(item.rationale) || `Affects ${raw.affected_learners} learners.`,
+      finding: sanitize(item.finding, 300) || `Completion time for ${raw.module} exceeds expectations.`,
+      suggestion: sanitize(item.suggestion, 300) || `Review ${raw.module} content for improvement opportunities.`,
+      rationale: sanitize(item.rationale, 300) || `Affects ${raw.affected_learners} learners.`,
     });
   }
 
@@ -502,11 +502,7 @@ function normalizeSeverity(raw: string | undefined): Bottleneck['severity'] {
   return 'medium';
 }
 
-/** Sanitize an LLM-generated string — strip quotes, trim, cap length. */
-function sanitize(text: string | undefined): string {
-  if (!text) return '';
-  return text.replace(/^["']+|["']+$/g, '').trim().slice(0, 300);
-}
+import { sanitize } from '../../shared/sanitize';
 
 /** Build skeleton bottleneck items from raw data when LLM is unavailable. */
 function buildSkeletonBottlenecks(rawBottlenecks: RawBottleneck[]): Bottleneck[] {

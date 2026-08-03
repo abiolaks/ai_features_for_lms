@@ -22,10 +22,13 @@ export function parseLlmJson<T>(response: string): T | null {
   const codeBlock = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   const inner = codeBlock ? codeBlock[1] : response;
 
-  // Try object first (most common), then array
-  const strictObj = inner.match(/\{[\s\S]*\}/)?.[0];
+  // Try both patterns — use the longer match (prevents inner array from
+  // outcompeting outer object when both are present)
   const strictArr = inner.match(/\[[\s\S]*\]/)?.[0];
-  const strictJson = strictObj || strictArr;
+  const strictObj = inner.match(/\{[\s\S]*\}/)?.[0];
+  const strictJson = (strictArr && strictObj)
+    ? (strictArr.length >= strictObj.length ? strictArr : strictObj)
+    : (strictArr || strictObj);
   if (strictJson) {
     try {
       return JSON.parse(strictJson) as T;

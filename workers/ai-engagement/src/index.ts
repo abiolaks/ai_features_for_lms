@@ -495,10 +495,7 @@ function isValidType(t: string): t is InsightType {
 }
 
 /** Sanitize an LLM-generated string — strip quotes, trim, cap length. */
-function sanitize(text: string | undefined): string {
-  if (!text) return '';
-  return text.replace(/^["']+|["']+$/g, '').trim().slice(0, 500);
-}
+import { sanitize } from '../../shared/sanitize';
 
 /** Build skeleton insights from raw patterns when LLM is unavailable. */
 function buildSkeletonInsights(rawPatterns: RawPattern[]): Insight[] {

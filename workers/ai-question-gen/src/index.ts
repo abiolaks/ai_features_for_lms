@@ -362,13 +362,12 @@ function parseQuestions(
     const text = sanitize(item.text);
     if (!text) continue;
 
-    const options = (item.options || []).map(sanitize).filter((s) => s.length > 0);
+    const options = (item.options || []).map((s) => sanitize(s)).filter((s) => s.length > 0);
     if (options.length < 2) continue;
 
     const correct = sanitize(item.correct_answer);
     if (!correct) continue;
 
-    // Validate correct_answer is in options
     if (!options.includes(correct)) continue;
 
     questions.push({
@@ -390,10 +389,7 @@ function parseQuestions(
 //  Helpers
 // ════════════════════════════════════════════════════════
 
-function sanitize(text: string | undefined): string {
-  if (!text) return '';
-  return text.replace(/^["']+|["']+$/g, '').trim().slice(0, 500);
-}
+import { sanitize } from '../../shared/sanitize';
 
 // ════════════════════════════════════════════════════════
 //  Response Builders
