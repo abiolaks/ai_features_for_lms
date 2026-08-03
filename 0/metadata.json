@@ -1,0 +1,80 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZ4624MRTYKTPAEDSX2J3184",
+  "session_id": "019fc85d-2d8b-75b3-a2e8-9903591bb6fa",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-03T16:07:13.045377Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "save_step_count": 1,
+  "files_touched": [
+    "README.md"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "056f89303881",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 24159,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 232960,
+    "output_tokens": 5766,
+    "api_call_count": 12
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "pi-skill-entire-2026-08-03T16:04:03.535Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "entire"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "b35f5d7c1517",
+      "timestamp": "2026-08-03T16:04:03.535Z",
+      "native": {
+        "command": "/skill:entire"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:entire",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-03T16:07:13.030244Z",
+    "agent_lines": 86,
+    "agent_removed": 44,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 86,
+    "total_lines_changed": 130,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 86,
+      "agent_lines_removed": 44
+    }
+  ]
+}
