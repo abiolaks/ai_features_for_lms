@@ -1,12 +1,13 @@
 # AI Features for LMS — AGENTS.md
 
 **Generated:** 2026-07-20
+**Updated:** 2026-08-03
 
 ## OVERVIEW
 
 Project: **AI Features for LMS** — AI-powered features for a Learning Management Platform
 Stack: Cloudflare Workers (TypeScript 5.5+, ES2022), Workers AI (llama-3.2-3b-instruct), Vectorize, D1, KV, Durable Objects, R2, Stream, Queues, Pages
-Status: **7 workers, 125/125 tests passing** (ai-dashboard remaining)
+Status: **13 workers deployed, 298/298 tests passing** (ai-dashboard built, pending Pages deploy)
 
 ## COMMUNICATION STYLE
 
@@ -34,15 +35,22 @@ ai_features_for_lms/
 │   ├── ai-paths/              # AI06 — Learning Path Generation
 │   ├── ai-insights/           # AI08 — Post-Quiz Insights with review links
 │   ├── ai-recommendations/    # AI07 — Enhanced Recommendations + fallback engine
+│   ├── ai-assistant/          # F06 — Platform-wide chat assistant (Durable Objects)
+│   ├── ai-mentor/             # F03a — Skill-gap analysis
 │   ├── ai-bottlenecks/        # F04a — Admin bottleneck detection (aggregate analytics)
+│   ├── ai-engagement/         # F04b — Admin engagement monitoring
+│   ├── ai-analytics/          # F05 — Admin analytics narratives
+│   ├── ai-question-gen/       # F07 — Auto-generate quiz questions
+│   ├── ai-quality/            # F08 — Validate generated questions
+│   ├── mentor/                # F03a duplicate (skill-gap, deployed separate)
 │   └── ai-dashboard/          # AI13 — Demo Dashboard (Pages, static)
 ├── Issues/                    # Issue tracking (done, in-progress, future slices)
-├── docs/                      # Architecture, API contract, PRD, deployment logs
+├── docs/                      # Integration guide, feature overview, PRD, tech stack
 ├── architecture/              # Module architecture docs
 ├── scripts/                   # Utility scripts
 ├── knowledge.md               # Session knowledge base (blockers, resolutions, decisions)
 ├── README.md                  # Project README with architecture and worker table
-└── api.json                   # LMS REST API contract (OpenAPI)
+└── lmsapi.json                # LMS REST API contract (OpenAPI, 4.2MB)
 ```
 
 ## WORKERS
@@ -51,11 +59,17 @@ ai_features_for_lms/
 |--------|----|---------|-------------|-------|
 | **ai-gateway** | AI03 | LLM router — model selection, token budgeting, D1 tracking | Internal (service binding) | 14 |
 | **ai-indexing** | AI01 | Content indexing — VTT → chunk → embed → Vectorize | `POST /index`, `POST /deindex` (webhook) | 17 |
-| **ai-tutor** | AI04 | Grounded Q&A with WebSocket streaming | `POST /tutor/ask`, `/tutor/clear`, `WS /tutor/ws` | 21 |
+| **ai-tutor** | AI04 | Grounded Q&A + Voice (STT/TTS) + WebSocket streaming | `POST /tutor/ask`, `/tutor/clear`, `WS /tutor/ws` | 33 |
+| **ai-assistant** | F06 | Platform-wide chat — course discovery, topic Q&A | `POST /assistant/ask`, `/assistant/clear` | 37 |
 | **ai-paths** | AI06 | Personalized learning paths | `POST /paths/generate` | 20 |
-| **ai-insights** | AI08 | Post-quiz coaching with review links | `POST /insights/generate` | 30 |
+| **ai-insights** | AI08 | Post-quiz coaching + mentor session prep | `POST /insights/generate`, `/mentor/session-prep` | 62 |
 | **ai-recommendations** | AI07 | Enhanced recs + fallback engine, 24h KV cache | `GET|POST /recommendations/dashboard`, `/next` | 23 |
+| **ai-mentor / mentor** | F03a | Skill-gap analysis | `GET /mentor/skill-gap` | 29 |
 | **ai-bottlenecks** | F04a | Admin bottleneck detection — aggregate analytics | `GET /admin/bottlenecks` | 37 |
+| **ai-engagement** | F04b | Admin engagement monitoring — video drop-off, stall rates | `GET /admin/engagement` | 37 |
+| **ai-analytics** | F05 | Admin analytics narratives — NL summaries, period comparison | `GET /admin/narrative` | 30 |
+| **ai-question-gen** | F07 | Auto-generate quiz questions from lesson content | `POST /questions/generate` | 21 |
+| **ai-quality** | F08 | Validate generated questions — accuracy, bias, clarity | `POST /questions/validate` | 20 |
 | **ai-dashboard** | AI13 | Static Pages site — worker status cards | Pages deploy | Built |
 
 ## COMMANDS
@@ -75,8 +89,8 @@ All commands run from the individual worker directory (`workers/<name>/`):
 
 | Secret | Workers |
 |--------|---------|
-| `LMS_GATEWAY_URL` | ai-paths, ai-indexing, ai-recommendations, ai-insights |
-| `LMS_INTERNAL_KEY` | ai-paths, ai-indexing, ai-recommendations, ai-insights |
+| `LMS_GATEWAY_URL` | ai-paths, ai-indexing, ai-recommendations, ai-insights, ai-tutor, ai-assistant, ai-mentor, ai-bottlenecks, ai-engagement, ai-analytics, ai-question-gen |
+| `LMS_INTERNAL_KEY` | ai-paths, ai-indexing, ai-recommendations, ai-insights, ai-tutor, ai-assistant, ai-mentor, ai-bottlenecks, ai-engagement, ai-analytics, ai-question-gen |
 | `LMS_WEBHOOK_SECRET` | ai-indexing only |
 | `CLOUDFLARE_STREAM_API_TOKEN` | ai-indexing only |
 | `CLOUDFLARE_ACCOUNT_ID` | ai-indexing only |
@@ -93,19 +107,19 @@ Learner ──→ AI Tutor / Paths / Recs / Insights ──→ AI03 Gateway (ser
 
 | Binding | Used By |
 |---------|---------|
-| `AI_GATEWAY` → ai-gateway Worker | ai-paths, ai-tutor, ai-recommendations, ai-insights |
-| `VECTORIZE_INDEX` → `lms-lessons` | ai-indexing, ai-tutor, ai-recommendations |
+| `AI_GATEWAY` → ai-gateway Worker | ai-paths, ai-tutor, ai-recommendations, ai-insights, ai-assistant, ai-mentor, ai-bottlenecks, ai-engagement, ai-analytics, ai-question-gen, ai-quality |
+| `VECTORIZE_INDEX` → `lms-lessons` | ai-indexing, ai-tutor, ai-recommendations, ai-assistant, ai-question-gen |
 | `INDEXING_QUEUE` → `indexing-jobs` | ai-indexing |
 | `TUTOR_SESSION` → TutorSession DO | ai-tutor |
-| `LMS_CACHE` → KV | ai-recommendations, ai-dashboard |
+| `LMS_CACHE` → KV | ai-recommendations, ai-dashboard, ai-assistant |
 | `STREAM`, `LMS_CONTENT` | ai-indexing |
 
 ### LLM Tier
 
 | Tier | Model | Workers |
 |------|-------|---------|
-| Standard | `@cf/meta/llama-3.2-3b-instruct` | ai-tutor, ai-paths, ai-recommendations, ai-insights |
-| Quality | TBD | Future (assessment gen, quality checks) |
+| Standard | `@cf/meta/llama-3.2-3b-instruct` | ai-tutor, ai-paths, ai-recommendations, ai-insights, ai-assistant, ai-mentor, ai-bottlenecks, ai-engagement, ai-quality |
+| Quality | `@cf/meta/llama-3.3-70b-instruct-fp8-fast` | ai-analytics (narratives), ai-question-gen |
 | Embeddings | `@cf/baai/bge-large-en-v1.5` (1024-dim) | ai-indexing, ai-tutor, ai-recommendations |
 
 ## CODING STANDARDS
@@ -132,17 +146,22 @@ Learner ──→ AI Tutor / Paths / Recs / Insights ──→ AI03 Gateway (ser
 
 ## API CONTRACT
 
-The single authoritative contract is `docs/lms-api-contract-for-backend.md`. The `api.json` file contains the OpenAPI spec.
+The authoritative LMS API spec is `lmsapi.json` (OpenAPI, 4.2MB). For integration details see `docs/lms-integration-guide.md`.
 
 **LMS REST endpoints consumed by workers:**
+- `GET /api/v1/health` → reachability check
 - `GET /api/v1/learner/profile` → profile, skills, gamification
-- `GET /api/v1/catalog?organization_id=` → course catalogue
-- `GET /api/v1/public/courses` → fallback catalogue
+- `GET /api/v1/learner/preferences` → knownSkills, interests, learningGoal
+- `GET /api/v1/catalog?organization_id=` → course catalogue (support `per_page=100`)
 - `GET /api/v1/progress/user?userId=` → enrollments + progress
+- `GET /api/v1/lessons/{id}` → lesson detail + content
 - `GET /api/v1/learner/assessments/{id}` → assessment metadata
 - `GET /api/v1/learner/assessments/attempts/{id}` → quiz attempt + responses
-- `GET /api/v1/lessons/{id}` → lesson detail + content
 - `GET /api/v1/modules/{moduleId}/lessons` → lesson listing for review links
+- `GET /api/v1/learner/assessments/summary?userId=&organization_id=` → quiz summary for session prep
+- `GET /api/v1/admin/progress/aggregate?organization_id=&period=` → module-level completion stats
+- `GET /api/v1/admin/assessments/aggregate?organization_id=&period=` → per-topic quiz scores
+- `GET /api/v1/admin/engagement?organization_id=&period=` → video watch %, course stall rates
 
 **Auth**: `X-API-Key` header for service calls, or `Authorization: Bearer <JWT>` — handled by shared `fetch-lms.ts`.
 
@@ -151,10 +170,11 @@ The single authoritative contract is `docs/lms-api-contract-for-backend.md`. The
 - **Source**: `workers/<name>/src/index.ts`
 - **Shared modules**: `workers/shared/`
 - **Tests**: `workers/<name>/test/index.test.ts`
-- **Docs**: `docs/` (contract, tech-stack, PRD, deployment)
-- **API contract**: `docs/lms-api-contract-for-backend.md`
+- **Docs**: `docs/` — integration guide, feature overview, tech-stack, PRD
+- **Integration guide**: `docs/lms-integration-guide.md`
+- **Feature overview**: `docs/ai-features-overview.md`
+- **API spec**: `lmsapi.json` (OpenAPI, 4.2MB)
 - **Architecture**: `architecture/module-architecture.md`
-- **Project README**: `README.md`
 - **Session knowledge**: `knowledge.md`
 - **Issue tracking**: `Issues/`
 - **Progress**: `progress.txt`
@@ -167,5 +187,6 @@ The single authoritative contract is `docs/lms-api-contract-for-backend.md`. The
 - CORS origins include `learning.lumerax.co`, LMS staging, and localhost dev ports — configured in shared `cors.ts`.
 - Durable Objects (TutorSession) use SQLite for per-learner conversation state. Deterministic routing by `learner_id`.
 - The ai-dashboard worker is a Cloudflare Pages project (static), not a Worker — no `package.json` or `wrangler.jsonc`.
-- Phase 2 features (F03a–F04b, F05–F08) are tracked in `Issues/future/` — 8 deployable slices planned.
+- Phase 1 (7 workers) and Phase 2 (6 workers) are complete and deployed. Phase 3 (F02 Mentor Matching, F09 Assessment Approval) is deferred.
+- The avatar lip-sync feature (04-avatar, 10 tickets) is future work — see `Issues/ai/04-avatar/`.
 - The `knowledge.md` file is a living session knowledge base — check it for past blockers, design decisions, and resolutions.
