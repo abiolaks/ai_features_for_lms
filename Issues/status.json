@@ -65,20 +65,26 @@
       "github": null
     },
     "F07": {
-      "status": "pending",
+      "status": "complete",
       "title": "Question Generation",
+      "deployed": "https://ai-question-gen.yomi-alarape.workers.dev",
+      "tests": "21/21",
       "phase": 2,
       "github": null
     },
     "F08": {
-      "status": "pending",
+      "status": "complete",
       "title": "Quality Checks",
+      "deployed": "https://ai-quality.yomi-alarape.workers.dev",
+      "tests": "20/20",
       "phase": 2,
       "github": null
     },
     "F05": {
-      "status": "pending",
+      "status": "complete",
       "title": "Admin Analytics Narratives",
+      "deployed": "https://ai-analytics.yomi-alarape.workers.dev",
+      "tests": "30/30",
       "phase": 2,
       "github": 15
     },
@@ -145,6 +151,6 @@
   "cut": [
     "AI05 \u2014 LMS already has richer learner profiles"
   ],
-  "completed_slices": 12,
-  "pending_slices": 3
+  "completed_slices": 15,
+  "pending_slices": 0
 }

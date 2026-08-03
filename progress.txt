@@ -17,9 +17,9 @@
 - [x] Voice Tutor (STT + TTS + pipeline) — deployed (ai-tutor), part of 33/33 tests
 - [x] F04a Bottleneck Detection — deployed, 37/37 tests
 - [x] F04b Engagement Monitoring — deployed (ai-engagement), 37/37 tests
-- [ ] F05 Admin Analytics Narratives
-- [ ] F07 Question Generation
-- [ ] F08 Quality Checks
+- [x] F05 Admin Analytics Narratives — deployed (ai-analytics), 30/30 tests
+- [x] F07 Question Generation — deployed (ai-question-gen), 21/21 tests
+- [x] F08 Quality Checks — deployed (ai-quality), 20/20 tests
 
 ## Deferred / Phase 3
 - [ ] F02 Mentor Matching — blocked on Mentor Directory data product
