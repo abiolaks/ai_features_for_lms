@@ -22,8 +22,10 @@ export function parseLlmJson<T>(response: string): T | null {
   const codeBlock = response.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   const inner = codeBlock ? codeBlock[1] : response;
 
-  // Try strict parse first (existing behavior)
-  const strictJson = inner.match(/\{[\s\S]*\}/)?.[0];
+  // Try object first (most common), then array
+  const strictObj = inner.match(/\{[\s\S]*\}/)?.[0];
+  const strictArr = inner.match(/\[[\s\S]*\]/)?.[0];
+  const strictJson = strictObj || strictArr;
   if (strictJson) {
     try {
       return JSON.parse(strictJson) as T;
@@ -31,11 +33,16 @@ export function parseLlmJson<T>(response: string): T | null {
   }
 
   // ── Recovery: LLM truncated JSON (missing closing braces/brackets) ──
-  // Extract everything from the first `{` to EOL, then balance braces.
-  const firstBrace = inner.indexOf('{');
-  if (firstBrace === -1) return null;
+  // Find the first `{` or `[`, then balance braces.
+  const firstObj = inner.indexOf('{');
+  const firstArr = inner.indexOf('[');
+  let firstIdx = -1;
+  if (firstObj === -1 && firstArr === -1) return null;
+  if (firstObj === -1) firstIdx = firstArr;
+  else if (firstArr === -1) firstIdx = firstObj;
+  else firstIdx = Math.min(firstObj, firstArr);
 
-  let candidate = inner.slice(firstBrace);
+  let candidate = inner.slice(firstIdx);
   const balanced = balanceBraces(candidate);
   if (!balanced) return null;
   candidate = balanced;
