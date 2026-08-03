@@ -235,3 +235,9 @@ _scripts/
 
 # Wrangler local dev variables (never deployed)
 .dev.vars
+
+# Agent tool configs
+.claude/
+.pi/
+.scratch/
+.entire/
