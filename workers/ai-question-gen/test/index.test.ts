@@ -626,3 +626,33 @@ describe('Observability spans', () => {
     expect(insightSpans[0].generated_count).toBe(5);
   });
 });
+
+import { parseLlmJson } from '../../shared/llm-parser';
+describe('Debug parseLlmJson', () => {
+  it('parses JSON array correctly', () => {
+    const arr = [{a:1},{b:2}];
+    const json = JSON.stringify(arr);
+    const result = parseLlmJson(json);
+    expect(result).toBeInstanceOf(Array);
+    expect(result.length).toBe(2);
+  });
+});
+// ── Regression: parseLlmJson array support ──
+import { parseLlmJson } from '../../shared/llm-parser';
+
+describe('parseLlmJson regression', () => {
+  it('parses JSON array from callGateway output', () => {
+    // Exact reproduction of MOCK_LLM_QUESTIONS → callGateway → parseQuestions flow
+    const rawQuestions = [
+      { text: 'Q1', options: ['A','B','C','D'], correct_answer: 'A', difficulty: 'beginner', topic: 'T1' },
+      { text: 'Q2', options: ['E','F','G','H'], correct_answer: 'E', difficulty: 'beginner', topic: 'T2' },
+      { text: 'Q3', options: ['I','J','K','L'], correct_answer: 'I', difficulty: 'beginner', topic: 'T3' },
+      { text: 'Q4', options: ['M','N','O','P'], correct_answer: 'M', difficulty: 'beginner', topic: 'T4' },
+      { text: 'Q5', options: ['Q','R','S','T'], correct_answer: 'Q', difficulty: 'beginner', topic: 'T5' },
+    ];
+    const text = JSON.stringify(rawQuestions);
+    const result = parseLlmJson(text);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.length).toBe(5);
+  });
+});
