@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "ai-quality",
+  "main": "src/index.ts",
+  "account_id": "6a42fe51d00d9ba921124c3f6e7ed092",
+  "compatibility_date": "2026-07-01",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "services": [
+    {
+      "binding": "AI_GATEWAY",
+      "service": "ai-gateway"
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  }
+}
