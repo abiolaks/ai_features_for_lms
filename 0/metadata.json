@@ -1,0 +1,82 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZ46AY7KJ8P4G08429HA7BSB",
+  "session_id": "019fc85d-2d8b-75b3-a2e8-9903591bb6fa",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-03T16:12:01.459368Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 1,
+  "files_touched": [
+    "architecture/module-architecture.md"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "174c680e3e75",
+  "checkpoint_transcript_start": 37,
+  "transcript_lines_at_start": 37,
+  "compact_transcript_start": 18,
+  "token_usage": {
+    "input_tokens": 5621,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 141056,
+    "output_tokens": 5708,
+    "api_call_count": 4
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "pi-skill-entire-2026-08-03T16:04:03.535Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "entire"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "b35f5d7c1517",
+      "timestamp": "2026-08-03T16:04:03.535Z",
+      "native": {
+        "command": "/skill:entire"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:entire",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-03T16:12:01.434312Z",
+    "agent_lines": 242,
+    "agent_removed": 298,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 242,
+    "total_lines_changed": 540,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 242,
+      "agent_lines_removed": 298
+    }
+  ]
+}
