@@ -44,3 +44,32 @@ export async function fetchLms(
 
   return response;
 }
+
+/**
+ * Fetch a typed resource from the LMS and unwrap the response envelope.
+ *
+ * LMS responses use `{ data: ... }` or bare objects. This function
+ * handles both, returning the typed payload or null on failure.
+ *
+ * Usage:
+ *   const progress = await fetchLmsResource<ProgressData>(env, path);
+ *   if (!progress) { ... degraded ... }
+ *
+ * @returns The typed data payload, or null if the request fails or
+ *          the response body is not an object.
+ */
+export async function fetchLmsResource<T>(
+  env: { LMS_GATEWAY_URL: string; LMS_INTERNAL_KEY: string },
+  path: string,
+): Promise<T | null> {
+  try {
+    const resp = await fetchLms(env, { path });
+    if (!resp.ok) return null;
+    const raw = (await resp.json()) as any;
+    const data: unknown = raw.data || raw;
+    if (data && typeof data === 'object') return data as T;
+    return null;
+  } catch {
+    return null;
+  }
+}

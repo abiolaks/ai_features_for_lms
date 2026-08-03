@@ -9,7 +9,7 @@
 // improve retention.
 // ============================================================
 
-import { fetchLms } from '../../shared/fetch-lms';
+import { fetchLmsResource } from '../../shared/fetch-lms';
 import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan } from '../../shared/observability';
 import { callGateway } from '../../shared/gateway';
@@ -167,21 +167,9 @@ async function handleEngagement(
   setAttr(dataSpan, 'period', period);
 
   // ── Fetch engagement data from LMS ──
-  let engagementData: EngagementData | null = null;
-  try {
-    const resp = await fetchLms(env, {
-      path: `/api/v1/admin/engagement?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`,
-    });
-    if (resp.ok) {
-      const raw = (await resp.json()) as any;
-      const data = raw.data || raw;
-      if (data && typeof data === 'object') {
-        engagementData = data as EngagementData;
-      }
-    }
-  } catch {
-    setAttr(dataSpan, 'lms_unreachable', true);
-  }
+  const ep = `/api/v1/admin/engagement?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`;
+  const engagementData = await fetchLmsResource<EngagementData>(env, ep);
+  if (!engagementData) setAttr(dataSpan, 'lms_unreachable', true);
 
   if (!engagementData) {
     endSpan(dataSpan);

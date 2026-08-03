@@ -9,7 +9,7 @@
 // quiz score drops — with AI-generated suggestions.
 // ============================================================
 
-import { fetchLms } from '../../shared/fetch-lms';
+import { fetchLmsResource } from '../../shared/fetch-lms';
 import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan, type SpanContext } from '../../shared/observability';
 import { callGateway } from '../../shared/gateway';
@@ -161,43 +161,20 @@ async function handleBottlenecks(
   setAttr(dataSpan, 'org_id', orgId);
   setAttr(dataSpan, 'period', period);
 
-  // ── 1. Fetch progress aggregate ──
-  let progressData: ProgressAggregateData | null = null;
-  let progressOk = false;
-  try {
-    const resp = await fetchLms(env, {
-      path: `/api/v1/admin/progress/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`,
-    });
-    if (resp.ok) {
-      const raw = (await resp.json()) as any;
-      const data = raw.data || raw;
-      if (data && typeof data === 'object') {
-        progressData = data as ProgressAggregateData;
-        progressOk = true;
-      }
-    }
-  } catch {
-    setAttr(dataSpan, 'progress_unavailable', true);
-  }
+  // ── 1. Fetch progress + assessments aggregate ──
+  const pp = `/api/v1/admin/progress/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`;
+  const ap = `/api/v1/admin/assessments/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`;
 
-  // ── 2. Fetch assessments aggregate ──
-  let assessmentData: AssessmentsAggregateData | null = null;
-  let assessmentOk = false;
-  try {
-    const resp = await fetchLms(env, {
-      path: `/api/v1/admin/assessments/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`,
-    });
-    if (resp.ok) {
-      const raw = (await resp.json()) as any;
-      const data = raw.data || raw;
-      if (data && typeof data === 'object') {
-        assessmentData = data as AssessmentsAggregateData;
-        assessmentOk = true;
-      }
-    }
-  } catch {
-    setAttr(dataSpan, 'assessments_unavailable', true);
-  }
+  const [progressData, assessmentData] = await Promise.all([
+    fetchLmsResource<ProgressAggregateData>(env, pp),
+    fetchLmsResource<AssessmentsAggregateData>(env, ap),
+  ]);
+
+  const progressOk = progressData !== null;
+  const assessmentOk = assessmentData !== null;
+
+  if (!progressData) setAttr(dataSpan, 'progress_unavailable', true);
+  if (!assessmentData) setAttr(dataSpan, 'assessments_unavailable', true);
 
   if (!progressOk && !assessmentOk) {
     setAttr(dataSpan, 'lms_unreachable', true);

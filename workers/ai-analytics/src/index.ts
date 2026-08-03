@@ -9,7 +9,7 @@
 // Uses quality-tier LLM for richer, more nuanced narratives.
 // ============================================================
 
-import { fetchLms } from '../../shared/fetch-lms';
+import { fetchLmsResource } from '../../shared/fetch-lms';
 import { json, handleCors } from '../../shared/cors';
 import { startSpan, setAttr, endSpan } from '../../shared/observability';
 import { callGateway } from '../../shared/gateway';
@@ -200,12 +200,20 @@ async function handleNarrative(
   setAttr(dataSpan, 'period', period);
 
   // ── Fetch current period data ──
+  const pp = `/api/v1/admin/progress/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`;
+  const ap = `/api/v1/admin/assessments/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`;
+  const ep = `/api/v1/admin/engagement?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`;
+
   const [progress, assessments, engagement, previous] = await Promise.all([
-    fetchProgress(orgId, period, env, dataSpan),
-    fetchAssessments(orgId, period, env, dataSpan),
-    fetchEngagement(orgId, period, env, dataSpan),
+    fetchLmsResource<ProgressAggregateData>(env, pp),
+    fetchLmsResource<AssessmentsAggregateData>(env, ap),
+    fetchLmsResource<EngagementData>(env, ep),
     fetchPreviousPeriod(orgId, period, env),
   ]);
+
+  if (!progress) setAttr(dataSpan, 'progress_unavailable', true);
+  if (!assessments) setAttr(dataSpan, 'assessments_unavailable', true);
+  if (!engagement) setAttr(dataSpan, 'engagement_unavailable', true);
 
   const progressOk = progress !== null;
   const assessmentOk = assessments !== null;
@@ -298,87 +306,14 @@ async function handleNarrative(
 }
 
 // ════════════════════════════════════════════════════════
-//  Data Fetching
-// ════════════════════════════════════════════════════════
-
-async function fetchProgress(
-  orgId: string,
-  period: string,
-  env: Env,
-  dataSpan: any,
-): Promise<ProgressAggregateData | null> {
-  try {
-    const resp = await fetchLms(env, {
-      path: `/api/v1/admin/progress/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`,
-    });
-    if (resp.ok) {
-      const raw = (await resp.json()) as any;
-      const data = raw.data || raw;
-      if (data && typeof data === 'object') return data as ProgressAggregateData;
-    }
-    return null;
-  } catch {
-    setAttr(dataSpan, 'progress_unavailable', true);
-    return null;
-  }
-}
-
-async function fetchAssessments(
-  orgId: string,
-  period: string,
-  env: Env,
-  dataSpan: any,
-): Promise<AssessmentsAggregateData | null> {
-  try {
-    const resp = await fetchLms(env, {
-      path: `/api/v1/admin/assessments/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`,
-    });
-    if (resp.ok) {
-      const raw = (await resp.json()) as any;
-      const data = raw.data || raw;
-      if (data && typeof data === 'object') return data as AssessmentsAggregateData;
-    }
-    return null;
-  } catch {
-    setAttr(dataSpan, 'assessments_unavailable', true);
-    return null;
-  }
-}
-
-async function fetchEngagement(
-  orgId: string,
-  period: string,
-  env: Env,
-  dataSpan: any,
-): Promise<EngagementData | null> {
-  try {
-    const resp = await fetchLms(env, {
-      path: `/api/v1/admin/engagement?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(period)}`,
-    });
-    if (resp.ok) {
-      const raw = (await resp.json()) as any;
-      const data = raw.data || raw;
-      if (data && typeof data === 'object') return data as EngagementData;
-    }
-    return null;
-  } catch {
-    setAttr(dataSpan, 'engagement_unavailable', true);
-    return null;
-  }
-}
-
-// ════════════════════════════════════════════════════════
 //  Previous Period
 // ════════════════════════════════════════════════════════
 
 /** Compute the previous period string from the current one. */
 function previousPeriod(current: string): string {
-  // "last_30_days" → previous 30-day window
   if (current.startsWith('last_')) {
     const days = parseInt(current.replace('last_', '').replace('_days', ''), 10);
-    if (!isNaN(days)) {
-      return `previous_${days}_days`;
-    }
+    if (!isNaN(days)) return `previous_${days}_days`;
   }
   return `previous_${current}`;
 }
@@ -389,34 +324,17 @@ async function fetchPreviousPeriod(
   env: Env,
 ): Promise<PreviousPeriodData> {
   const prev = previousPeriod(period);
+  const pp = `/api/v1/admin/progress/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(prev)}`;
+  const ap = `/api/v1/admin/assessments/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(prev)}`;
 
   try {
-    const [progressResp, assessmentResp] = await Promise.all([
-      fetchLms(env, {
-        path: `/api/v1/admin/progress/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(prev)}`,
-      }),
-      fetchLms(env, {
-        path: `/api/v1/admin/assessments/aggregate?organization_id=${encodeURIComponent(orgId)}&period=${encodeURIComponent(prev)}`,
-      }),
+    const [progress, assessments] = await Promise.all([
+      fetchLmsResource<ProgressAggregateData>(env, pp),
+      fetchLmsResource<AssessmentsAggregateData>(env, ap),
     ]);
-
-    let progressData: ProgressAggregateData | null = null;
-    let assessmentData: AssessmentsAggregateData | null = null;
-
-    if (progressResp.ok) {
-      const raw = (await progressResp.json()) as any;
-      progressData = (raw.data || raw) as ProgressAggregateData;
+    if (progress || assessments) {
+      return { available: true, progress, assessments };
     }
-
-    if (assessmentResp.ok) {
-      const raw = (await assessmentResp.json()) as any;
-      assessmentData = (raw.data || raw) as AssessmentsAggregateData;
-    }
-
-    if (progressData || assessmentData) {
-      return { available: true, progress: progressData, assessments: assessmentData };
-    }
-
     return { available: false, progress: null, assessments: null };
   } catch {
     return { available: false, progress: null, assessments: null };
