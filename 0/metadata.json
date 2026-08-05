@@ -1,0 +1,48 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZ8WM426QTBCQ3E6CMK2NER6",
+  "session_id": "019fd1ac-02d9-7d84-88d1-c034f3b32fc8",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-05T11:58:41.496967Z",
+  "branch": "main",
+  "checkpoints_count": 3,
+  "save_step_count": 1,
+  "files_touched": [
+    "docs/multitenancy.md"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "0b028ec8a4c1",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 17387,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 493952,
+    "output_tokens": 7889,
+    "api_call_count": 18
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-05T11:58:41.482282Z",
+    "agent_lines": 223,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 223,
+    "total_lines_changed": 223,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+how do the multitenacy works- i dont get it
+
+---
+
+how is this setup, is it setup manually or programmarically. for example is we have a new org today how will be .let's a new course is added to the lms, which is a new org id, but the ai tutor is not answeting it saying not in this lesson. so i want to how the org id is setup
+
+---
+
+document this multi teneancy handling
