@@ -1,3 +1,37 @@
+## 2026-08-03 — Session: Multitenancy & Reindexing Clarified
+
+### Multitenancy Model
+
+Five independent isolation layers, all keyed on `org_id` passed by the LMS frontend:
+
+| Layer | Mechanism | Auto for new org? |
+|-------|-----------|-------------------|
+| LMS REST API | Query param `organization_id=` | ✅ LMS handles |
+| Vectorize | Metadata `filter: {org_id}` + post-query check | ❌ LMS must fire `/index` webhooks |
+| D1 (token budgets) | `WHERE org_id = ?` + `INSERT OR IGNORE` on first use | ✅ 100K default cap |
+| KV (cache) | Key name includes `org_id` | ✅ On first request |
+| Durable Objects | One DO per learner (inherently single-org) | ✅ On first session |
+
+**Trust model:** Workers trust the LMS to send correct `org_id`. No JWT claim verification. LMS owns auth + org membership.
+
+**New org onboarding:** The LMS must fire webhooks for every lesson in the new org. Token budget auto-provisions. Without webhooks, Vectorize is empty → tutor says "not in this lesson". Stopgap: `scripts/backfill_all.py --org-id UUID --from-json export.json`.
+
+Full doc: `docs/multitenancy.md`
+
+### Reindex-on-Update
+
+No separate reindex endpoint. **`POST /index` handles both create and update.** Internally:
+
+1. Delete old vectors (up to 60 by ID, best-effort)
+2. Re-embed content from scratch
+3. Upsert new vectors with updated metadata
+
+Idempotent. No duplicates. Safe to call repeatedly for the same lesson.
+
+LMS should fire `POST /index` on: create, title change, content change, course/module reassignment. Should fire `POST /deindex` on: unpublish/delete.
+
+`POST /index` returns `202 { status: "queued" }` immediately — actual indexing is async via queue. For videos with `streamStatus !== "ready"`, returns `202 { reason: "video_not_ready" }` — LMS must re-fire when Stream finishes processing.
+
 ## 2026-07-29 — Session: Phase 2 Unblocked — lmsapi.json Has All Required Endpoints
 
 ### Discovery
