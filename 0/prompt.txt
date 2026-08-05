@@ -1,0 +1,13 @@
+lets understand this , the lms guys is askig - For every activity action (create/update) I'll index or reindex the content
+
+---
+
+do we have reindex
+
+---
+
+put this in knowledge
+
+---
+
+are you sure
