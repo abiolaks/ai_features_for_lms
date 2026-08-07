@@ -8,6 +8,7 @@
 
 import { TutorSession } from "./TutorSession";
 import { json, handleCors } from "../../shared/cors";
+import { startSpan, setAttr, endSpan, type SpanContext } from "../../shared/observability";
 
 export { TutorSession };
 
@@ -48,9 +49,17 @@ export default {
     const url = new URL(req.url);
     const path = url.pathname;
 
+    // ── Request span — captures every code path ──
+    const reqSpan = startSpan("tutor.request");
+    setAttr(reqSpan, "method", req.method);
+    setAttr(reqSpan, "path", path);
+
     // GET /diag-search?q=... — raw Vectorize query (dev diagnostic)
     if (req.method === "GET" && path === "/diag-search") {
-      return handleDiagSearch(url, env, req.headers.get("Origin"));
+      const resp = await handleDiagSearch(url, env, req.headers.get("Origin"));
+      setAttr(reqSpan, "status", resp.status);
+      endSpan(reqSpan);
+      return resp;
     }
 
     // GET /tutor/ws?learner_id=...&course_id=... — WebSocket upgrade (streaming tutor)
@@ -58,20 +67,34 @@ export default {
       const learnerId = url.searchParams.get("learner_id");
       const courseId = url.searchParams.get("course_id") || "default";
       if (!learnerId) {
+        setAttr(reqSpan, "status", 400);
+        endSpan(reqSpan);
         return json({ error: "missing_param: learner_id" }, 400);
       }
       const session = env.TUTOR_SESSION.get(
         env.TUTOR_SESSION.idFromName(`session-${learnerId}-${courseId}`)
       );
       // Forward to DO's fetch() which handles the WebSocket upgrade
-      return session.fetch(
+      const wsResp = await session.fetch(
         new Request(`https://dummy/ws`, {
           headers: req.headers,
         })
       );
+      setAttr(reqSpan, "status", wsResp.status);
+      endSpan(reqSpan);
+      return wsResp;
+    }
+
+    // GET /health — uptime check (no DO wake, no auth required)
+    if (req.method === "GET" && path === "/health") {
+      setAttr(reqSpan, "status", 200);
+      endSpan(reqSpan);
+      return json({ status: "ok", worker: "ai-tutor" }, 200);
     }
 
     if (req.method !== "POST") {
+      setAttr(reqSpan, "status", 405);
+      endSpan(reqSpan);
       return json({ error: "Method not allowed" }, 405);
     }
 
@@ -81,16 +104,23 @@ export default {
       try {
         body = await req.json();
       } catch {
+        setAttr(reqSpan, "status", 400);
+        endSpan(reqSpan);
         return json({ error: "Invalid JSON" }, 400);
       }
       if (!body.learner_id) {
+        setAttr(reqSpan, "status", 400);
+        endSpan(reqSpan);
         return json({ error: "missing_field: learner_id" }, 400);
       }
       const courseId = body.course_id || "default";
       const session = env.TUTOR_SESSION.get(
         env.TUTOR_SESSION.idFromName(`session-${body.learner_id}-${courseId}`)
       );
-      return session.clearHistory(req.headers.get("Origin"));
+      const clearResp = await session.clearHistory(req.headers.get("Origin"));
+      setAttr(reqSpan, "status", clearResp.status);
+      endSpan(reqSpan);
+      return clearResp;
     }
 
     // POST /tutor/ask — route to the learner's DO
@@ -99,33 +129,52 @@ export default {
       try {
         body = await req.json();
       } catch {
+        setAttr(reqSpan, "status", 400);
+        endSpan(reqSpan);
         return json({ error: "Invalid JSON" }, 400);
       }
 
-      if (!body.question) return json({ error: "missing_field: question" }, 400);
-      if (!body.learner_id) return json({ error: "missing_field: learner_id" }, 400);
-      if (!body.lesson_id) return json({ error: "missing_field: lesson_id" }, 400);
-      if (!body.org_id) return json({ error: "missing_field: org_id" }, 400);
+      if (!body.question) { setAttr(reqSpan, "status", 400); endSpan(reqSpan); return json({ error: "missing_field: question" }, 400); }
+      if (!body.learner_id) { setAttr(reqSpan, "status", 400); endSpan(reqSpan); return json({ error: "missing_field: learner_id" }, 400); }
+      if (!body.lesson_id) { setAttr(reqSpan, "status", 400); endSpan(reqSpan); return json({ error: "missing_field: lesson_id" }, 400); }
+      if (!body.org_id) { setAttr(reqSpan, "status", 400); endSpan(reqSpan); return json({ error: "missing_field: org_id" }, 400); }
 
       // ── Input guardrails ──
       // Reject overly long questions (potential abuse/DoS)
       if (body.question.length > 2000) {
+        setAttr(reqSpan, "status", 400);
+        endSpan(reqSpan);
         return json({ error: "Question too long (max 2000 chars)" }, 400);
       }
       // Reject empty/whitespace-only questions
       if (!body.question.trim()) {
+        setAttr(reqSpan, "status", 400);
+        endSpan(reqSpan);
         return json({ error: "Question cannot be empty" }, 400);
       }
       // Basic prompt injection pattern detection
-      const injectionPatterns = [
+      const INJECTION_PATTERN_NAMES = [
+        "ignore_instructions",
+        "system_injection",
+        "roleplay",
+        "jailbreak",
+        "special_tokens",
+      ] as const;
+      const injectionPatterns: RegExp[] = [
         /ignore (all |previous |above )?(instructions|rules|prompt)/i,
         /system:?\s*(prompt|message|instruction)/i,
         /you are now|act as|pretend to be|roleplay as/i,
         /DAN\b|jailbreak|developer mode/i,
         /\[SYSTEM\]|\[INST\]|<<SYS>>|<\|im_start\|>/i,
       ];
-      for (const pattern of injectionPatterns) {
-        if (pattern.test(body.question)) {
+      for (let i = 0; i < injectionPatterns.length; i++) {
+        if (injectionPatterns[i].test(body.question)) {
+          const blockSpan = startSpan("tutor.injection_blocked");
+          setAttr(blockSpan, "pattern", INJECTION_PATTERN_NAMES[i]);
+          setAttr(blockSpan, "question_length", body.question.length);
+          endSpan(blockSpan);
+          setAttr(reqSpan, "status", 200);
+          endSpan(reqSpan);
           return json({
             answer: "I'm here to help with course material. Let me know if you have questions about the lessons.",
             citations: [],
@@ -143,9 +192,14 @@ export default {
       const session = env.TUTOR_SESSION.get(
         env.TUTOR_SESSION.idFromName(`session-${body.learner_id}-${courseId}`)
       );
-      return session.ask(body);
+      const askResp = await session.ask(body);
+      setAttr(reqSpan, "status", askResp.status);
+      endSpan(reqSpan);
+      return askResp;
     }
 
+    setAttr(reqSpan, "status", 404);
+    endSpan(reqSpan);
     return json({ error: "Not found" }, 404);
   },
 };
