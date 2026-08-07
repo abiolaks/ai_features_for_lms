@@ -1,0 +1,68 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZF5A82B9BSSYKHYJ7P2906M",
+  "session_id": "019fde4d-11cd-71fb-a3ae-78451bb2d985",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-07T22:25:49.379684Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "save_step_count": 2,
+  "files_touched": [
+    "workers/ai-assistant/src/AssistantSession.ts",
+    "workers/ai-assistant/test/index.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "8cf9575140ba",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 13873,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 633216,
+    "output_tokens": 15118,
+    "api_call_count": 22
+  },
+  "session_metrics": {
+    "turn_count": 2
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-07T22:25:49.364877Z",
+    "agent_lines": 0,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 2,
+    "human_removed": 76,
+    "total_committed": 0,
+    "total_lines_changed": 78,
+    "agent_percentage": 0,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 485,
+      "user_lines_removed": 21,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        "workers/ai-assistant/src/AssistantSession.ts": 12,
+        "workers/ai-assistant/src/index.ts": 54,
+        "workers/ai-assistant/test/index.test.ts": 112,
+        "workers/ai-tutor/src/index.ts": 65,
+        "workers/ai-tutor/test/index.test.ts": 242
+      },
+      "user_removed_per_file": {
+        "workers/ai-assistant/src/index.ts": 8,
+        "workers/ai-assistant/test/index.test.ts": 2,
+        "workers/ai-tutor/src/index.ts": 11
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
