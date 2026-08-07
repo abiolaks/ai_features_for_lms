@@ -1,0 +1,154 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZF5GK339A0JN2045KWQ2HXN",
+  "session_id": "019fdcaa-c4ba-75be-b6a9-bfb4674494de",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-07T22:29:17.136144Z",
+  "branch": "main",
+  "checkpoints_count": 10,
+  "save_step_count": 1,
+  "files_touched": [
+    "workers/ai-assistant/src/index.ts",
+    "workers/ai-tutor/src/index.ts",
+    "workers/ai-tutor/test/index.test.ts"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "614571c61601",
+  "compact_transcript_start": 0,
+  "token_usage": {
+    "input_tokens": 57861,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 5482752,
+    "output_tokens": 44238,
+    "api_call_count": 82
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "pi-skill-to-tickets-2026-08-07T15:16:11.412Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "to-tickets"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "e26bd1e37751",
+      "timestamp": "2026-08-07T15:16:11.412Z",
+      "native": {
+        "command": "/skill:to-tickets"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:to-tickets",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "pi-skill-zoom-out-2026-08-07T15:19:46.225Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "zoom-out"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "ffd6953da3e3",
+      "timestamp": "2026-08-07T15:19:46.225Z",
+      "native": {
+        "command": "/skill:zoom-out"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:zoom-out",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "pi-skill-implement-2026-08-07T15:34:02.935Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "implement"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "a8bd373854e5",
+      "timestamp": "2026-08-07T15:34:02.935Z",
+      "native": {
+        "command": "/skill:implement"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:implement",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "pi-skill-code-review-2026-08-07T15:44:12.841Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "code-review"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "11dcc479cd7c",
+      "timestamp": "2026-08-07T15:44:12.841Z",
+      "native": {
+        "command": "/skill:code-review"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:code-review",
+        "default_collapsed": true
+      }
+    },
+    {
+      "id": "pi-skill-implement-2026-08-07T15:46:12.132Z-0",
+      "event_type": "prompt_invocation",
+      "skill": {
+        "name": "implement"
+      },
+      "source": {
+        "agent": "pi",
+        "signal": "input_slash_command",
+        "confidence": "explicit"
+      },
+      "turn_id": "0c4f85e58af2",
+      "timestamp": "2026-08-07T15:46:12.132Z",
+      "native": {
+        "command": "/skill:implement"
+      },
+      "collapse": {
+        "target": "user_message",
+        "label": "/skill:implement",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 25
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-07T22:29:17.084824Z",
+    "agent_lines": 361,
+    "agent_removed": 19,
+    "human_added": 27,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 388,
+    "total_lines_changed": 409,
+    "agent_percentage": 92.90953545232273,
+    "metric_version": 2
+  }
+}
