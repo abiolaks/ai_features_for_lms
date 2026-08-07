@@ -79,6 +79,8 @@ export class AssistantSession extends DurableObject<Env> {
 
   async ask(body: AskRequest): Promise<Response> {
     const origin = body.origin;
+    const askSpan = startSpan("assistant.ask");
+    setAttr(askSpan, "org_id", body.org_id);
     try {
       const history = this.loadHistory();
 
@@ -90,6 +92,8 @@ export class AssistantSession extends DurableObject<Env> {
       if (citations.length === 0) {
         setAttr(retrievalSpan, "match_count", 0);
         endSpan(retrievalSpan);
+        setAttr(askSpan, "no_citations", true);
+        endSpan(askSpan);
         return json({
           answer: "I couldn't find any relevant content across the platform for your question. Try rephrasing or asking about specific topics.",
           citations: [],
@@ -115,6 +119,8 @@ export class AssistantSession extends DurableObject<Env> {
       endSpan(gwSpan);
 
       if (!result) {
+        setAttr(askSpan, "gateway_error", true);
+        endSpan(askSpan);
         // Degraded: return citations without answer
         return json({
           answer: "I found some relevant content but the AI service is temporarily unavailable. Here are the matching topics:",
@@ -138,6 +144,10 @@ export class AssistantSession extends DurableObject<Env> {
 
       const answer = stripJsonBlock(result.text);
 
+      setAttr(askSpan, "suggested_courses", suggestedCourses.length);
+      setAttr(askSpan, "history_size", history.length + 2);
+      endSpan(askSpan);
+
       return json({
         answer,
         citations: citations.map((c) => ({
@@ -152,6 +162,8 @@ export class AssistantSession extends DurableObject<Env> {
         history_length: history.length + 2,
       }, 200, origin);
     } catch (err: any) {
+      setAttr(askSpan, "error", err.message);
+      endSpan(askSpan);
       return json({ error: `Assistant error: ${err.message}` }, 500, origin);
     }
   }

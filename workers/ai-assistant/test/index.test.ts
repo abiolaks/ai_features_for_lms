@@ -1009,3 +1009,39 @@ describe('Platform-wide scope', () => {
     expect(body.citations[0].course_id).toBe('course-python');
   });
 });
+
+// ════════════════════════════════════════════════════════
+//  Observability Spans
+// ════════════════════════════════════════════════════════
+// NOTE: DO test stubs don't exercise real AssistantSession code, so
+// assistant.ask span tests verify the shared test utilities. Production
+// spans are emitted by the real DO in AssistantSession.ts (assistant.ask,
+// assistant.retrieval, assistant.gateway, assistant.course_suggestion).
+
+describe('Observability', () => {
+  it('spyOnSpans correctly captures and filters structured span JSON', () => {
+    const { spans } = spyOnSpans();
+
+    console.log(JSON.stringify({ span: 'assistant.ask', duration_ms: 150, org_id: 'test', suggested_courses: 2 }));
+    console.log(JSON.stringify({ span: 'assistant.retrieval', duration_ms: 42, match_count: 5 }));
+    console.log(JSON.stringify({ span: 'assistant.gateway', duration_ms: 100, status: 200 }));
+
+    const askSpans = spans('assistant.ask');
+    const retrievalSpans = spans('assistant.retrieval');
+    const gatewaySpans = spans('assistant.gateway');
+    const missing = spans('nonexistent');
+
+    expect(askSpans.length).toBe(1);
+    expect(askSpans[0].duration_ms).toBe(150);
+    expect(askSpans[0].org_id).toBe('test');
+    expect(askSpans[0].suggested_courses).toBe(2);
+
+    expect(retrievalSpans.length).toBe(1);
+    expect(retrievalSpans[0].match_count).toBe(5);
+
+    expect(gatewaySpans.length).toBe(1);
+    expect(gatewaySpans[0].status).toBe(200);
+
+    expect(missing.length).toBe(0);
+  });
+});
