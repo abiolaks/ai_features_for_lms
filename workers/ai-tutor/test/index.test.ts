@@ -4,6 +4,7 @@ import {
   createExecutionContext,
   waitOnExecutionContext,
 } from 'cloudflare:test';
+import { spyOnSpans } from '../../shared/test-utils';
 import worker from '../src/index';
 
 // ──── Mocks ────
@@ -1316,5 +1317,40 @@ describe('Degradation', () => {
     const transcriptIdx = messages.findIndex((m: any) => m?.type === 'transcript');
     expect(transcriptIdx).toBeGreaterThanOrEqual(0);
     expect(elapsed).toBeLessThan(1500); // TTFA ≤1.5s
+  });
+});
+
+// ════════════════════════════════════════════════════════
+//  Observability Spans
+// ════════════════════════════════════════════════════════
+// NOTE: DO test stubs don't exercise real TutorSession code, so span
+// tests verify the shared test utilities. Production spans are emitted
+// by the real DO in TutorSession.ts (6 span declarations: tutor.embed,
+// tutor.vectorize, tutor.gateway×2, tutor.stream, tutor.ask).
+
+describe('Observability', () => {
+  it('spyOnSpans correctly captures and filters structured span JSON', () => {
+    const { spans } = spyOnSpans();
+
+    console.log(JSON.stringify({ span: 'data.fetch', duration_ms: 42, org_id: 'test' }));
+    console.log(JSON.stringify({ span: 'ai_gateway.generate', duration_ms: 100, status: 200 }));
+    console.log(JSON.stringify({ span: 'tutor.embed', duration_ms: 15, text_len: 22 }));
+
+    const data = spans('data.fetch');
+    const gateway = spans('ai_gateway.generate');
+    const embed = spans('tutor.embed');
+    const missing = spans('nonexistent');
+
+    expect(data.length).toBe(1);
+    expect(data[0].duration_ms).toBe(42);
+    expect(data[0].org_id).toBe('test');
+
+    expect(gateway.length).toBe(1);
+    expect(gateway[0].status).toBe(200);
+
+    expect(embed.length).toBe(1);
+    expect(embed[0].text_len).toBe(22);
+
+    expect(missing.length).toBe(0);
   });
 });
