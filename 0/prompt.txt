@@ -1,13 +1,1 @@
-hope you have not update my code or break anything
-
----
-
-walk me througth this code - how i understand this code base and how walkthrough it
-
----
-
-you can create a folder and use the /teach skill inside to teach about this repo. I wan to understand everyting. every component to the code and nitty greety
-
----
-
-what are the interface and the implementation in this codebase
+comit changes
