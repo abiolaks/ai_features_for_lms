@@ -1,0 +1,75 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZG97RVVGK0RWYDA9YYD05GJ",
+  "session_id": "019fde4d-11cd-71fb-a3ae-78451bb2d985",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-08T08:53:36.822865Z",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "save_step_count": 2,
+  "files_touched": [
+    "walkthrough/01-ARCHITECTURE.md",
+    "walkthrough/02-SHARED-MODULES.md",
+    "walkthrough/03-GATEWAY.md",
+    "walkthrough/04-DURABLE-OBJECTS.md",
+    "walkthrough/05-FETCH-HANDLER.md",
+    "walkthrough/06-INDEXING.md",
+    "walkthrough/07-TESTING.md",
+    "walkthrough/08-OTHER-WORKERS.md",
+    "walkthrough/09-DEPLOYMENT.md",
+    "walkthrough/10-FILE-REFERENCE.md",
+    "walkthrough/11-INTERFACES.md",
+    "walkthrough/12-DEEP-SHALLOW.md"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "aebf9f6d691c",
+  "checkpoint_transcript_start": 72,
+  "transcript_lines_at_start": 72,
+  "compact_transcript_start": 33,
+  "token_usage": {
+    "input_tokens": 44172,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3043328,
+    "output_tokens": 32422,
+    "api_call_count": 37
+  },
+  "session_metrics": {
+    "turn_count": 8
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-08T08:53:36.766467Z",
+    "agent_lines": 2361,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 2361,
+    "total_lines_changed": 2361,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 1618,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 2361,
+      "agent_lines_removed": 0
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZG97RVVGK0RWYDA9YYD05GJ",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 5,
+  "files_touched": [
+    "walkthrough/01-ARCHITECTURE.md",
+    "walkthrough/02-SHARED-MODULES.md",
+    "walkthrough/03-GATEWAY.md",
+    "walkthrough/04-DURABLE-OBJECTS.md",
+    "walkthrough/05-FETCH-HANDLER.md",
+    "walkthrough/06-INDEXING.md",
+    "walkthrough/07-TESTING.md",
+    "walkthrough/08-OTHER-WORKERS.md",
+    "walkthrough/09-DEPLOYMENT.md",
+    "walkthrough/10-FILE-REFERENCE.md",
+    "walkthrough/11-INTERFACES.md",
+    "walkthrough/12-DEEP-SHALLOW.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/0/metadata.json",
+      "transcript": "/0/full.jsonl",
+      "compact_transcript": "/0/transcript.jsonl",
+      "content_hash": "/0/content_hash.txt",
+      "prompt": "/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 44172,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 3043328,
+    "output_tokens": 32422,
+    "api_call_count": 37
+  }
+}
