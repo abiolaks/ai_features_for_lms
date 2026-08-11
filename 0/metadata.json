@@ -1,0 +1,50 @@
+{
+  "cli_version": "0.9.0",
+  "checkpoint_id": "01KZSHWFQ63K33APBVWPVT09AN",
+  "session_id": "019feb09-7196-7b44-971c-ab656cf922ed",
+  "strategy": "manual-commit",
+  "created_at": "2026-08-11T23:17:53.929775Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "save_step_count": 1,
+  "files_touched": [
+    "docs/ai-mvp-scope.md"
+  ],
+  "agent": "Pi",
+  "model": "deepseek-v4-pro",
+  "turn_id": "01398241331a",
+  "checkpoint_transcript_start": 185,
+  "transcript_lines_at_start": 185,
+  "compact_transcript_start": 104,
+  "token_usage": {
+    "input_tokens": 132,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 86272,
+    "output_tokens": 78,
+    "api_call_count": 1
+  },
+  "session_metrics": {
+    "turn_count": 28
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-08-11T23:17:53.896232Z",
+    "agent_lines": 0,
+    "agent_removed": 256,
+    "human_added": 67,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 67,
+    "total_lines_changed": 353,
+    "agent_percentage": 72.52124645892351,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
