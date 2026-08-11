@@ -30,6 +30,24 @@ const ALLOWED_ORIGINS = [
   "http://localhost:5173",
 ];
 
+/** Wildcard patterns — any origin matching these suffix/prefix patterns is allowed. */
+const ALLOWED_ORIGIN_PATTERNS = [
+  "https://*.ai-dashboard-edd.pages.dev",   // dashboard preview deploys
+  "https://ai-dashboard-edd.pages.dev",      // dashboard production
+];
+
+/** Check whether an origin matches an allowlist entry (exact or wildcard). */
+function isAllowedOrigin(origin: string): boolean {
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  return ALLOWED_ORIGIN_PATTERNS.some((pattern) => {
+    // Convert wildcard pattern to regex: escape dots, replace * with [^.]+
+    const regex = new RegExp(
+      "^" + pattern.replace(/\./g, "\\.").replace(/\*/g, "[^.]+") + "$"
+    );
+    return regex.test(origin);
+  });
+}
+
 /**
  * Build CORS headers for a given origin.
  * If the origin is in the allowlist, echo it back (required for
@@ -38,7 +56,7 @@ const ALLOWED_ORIGINS = [
  */
 export function corsHeadersFor(origin?: string | null): Record<string, string> {
   const allowed =
-    origin && ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+    origin && isAllowedOrigin(origin) ? origin : "*";
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "GET, POST, OPTIONS",

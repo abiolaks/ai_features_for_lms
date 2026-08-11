@@ -7,6 +7,7 @@
 // ============================================================
 
 import { fetchLms } from "../../shared/fetch-lms";
+import { handleCors, corsHeadersFor } from "../../shared/cors";
 
 export interface Env {
   AI: any;
@@ -265,6 +266,11 @@ async function embedAndUpsert(
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    // CORS preflight
+    const preflight = handleCors(req);
+    if (preflight) return preflight;
+
+    const origin = req.headers.get("Origin");
     const url = new URL(req.url);
     const path = url.pathname;
 
@@ -318,7 +324,7 @@ export default {
 
     // GET /status — dashboard: return indexed lesson count
     if (req.method === "GET" && path === "/status") {
-      return handleStatus(env, url);
+      return handleStatus(env, url, origin);
     }
 
     // All other endpoints: POST only
@@ -435,7 +441,8 @@ async function handleEnvCheck(env: Env): Promise<Response> {
   return Response.json({ keys, details });
 }
 
-async function handleStatus(env: Env, url: URL): Promise<Response> {
+async function handleStatus(env: Env, url: URL, origin: string | null): Promise<Response> {
+  const hdrs = { ...corsHeadersFor(origin) };
   try {
     const lessonId = url.searchParams.get("lesson_id");
     const orgId = url.searchParams.get("org_id");
@@ -448,7 +455,7 @@ async function handleStatus(env: Env, url: URL): Promise<Response> {
       const existing = await env.VECTORIZE_INDEX.getByIds(ids);
       const indexed = existing.filter((v: any) => v !== null);
 
-      return Response.json({
+      return new Response(JSON.stringify({
         lesson_id: lessonId,
         indexed: indexed.length > 0,
         chunks: indexed.length,
@@ -465,7 +472,7 @@ async function handleStatus(env: Env, url: URL): Promise<Response> {
               };
             })
           : null,
-      });
+      }), { headers: { "Content-Type": "application/json", ...hdrs } });
     }
 
     // Per-org lesson list: query Vectorize with org_id filter, deduplicate by lesson
@@ -499,18 +506,18 @@ async function handleStatus(env: Env, url: URL): Promise<Response> {
         }
       }
 
-      return Response.json({
+      return new Response(JSON.stringify({
         org_id: orgId,
         lessons_indexed: lessonMap.size,
         lessons: Array.from(lessonMap.values()),
-      });
+      }), { headers: { "Content-Type": "application/json", ...hdrs } });
     }
 
     // Full status — Vectorize health check
     const embedding = await env.AI.run(EMBEDDING_MODEL, { text: "health check" });
     const vector: number[] = embedding.data?.[0] ?? embedding;
     const results = await env.VECTORIZE_INDEX.query(vector, { topK: 1 });
-    return Response.json({
+    return new Response(JSON.stringify({
       status: "ok",
       vectorize: {
         index: "lms-lessons",
@@ -520,9 +527,9 @@ async function handleStatus(env: Env, url: URL): Promise<Response> {
       },
       r2: { bucket: "lms-content-staging" },
       stream: { available: !!env.STREAM },
-    });
+    }), { headers: { "Content-Type": "application/json", ...hdrs } });
   } catch (err: any) {
-    return Response.json({ status: "error", error: err.message }, { status: 500 });
+    return new Response(JSON.stringify({ status: "error", error: err.message }), { status: 500, headers: { "Content-Type": "application/json", ...hdrs } });
   }
 }
 

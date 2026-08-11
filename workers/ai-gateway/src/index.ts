@@ -1,4 +1,5 @@
 import type { GenerateRequest, GenerateResponse } from '../../shared/types';
+import { handleCors, corsHeadersFor } from '../../shared/cors';
 
 // ──── Model map — use the actual available models on this account ────
 const MODELS = {
@@ -23,7 +24,12 @@ interface BudgetRow {
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    // CORS preflight
+    const preflight = handleCors(req);
+    if (preflight) return preflight;
+
     const url = new URL(req.url);
+    const origin = req.headers.get('Origin');
 
     // ── GET /health — model connectivity check ──
     if (req.method === 'GET' && url.pathname === '/health') {
@@ -37,7 +43,7 @@ export default {
           used: budget.tokens_used_this_period,
           remaining: Math.max(0, budget.monthly_token_cap - budget.tokens_used_this_period),
         } : null,
-      }, 200);
+      }, 200, origin);
     }
 
     // ── GET /budget?org_id=... — budget status for dashboard ──
@@ -49,38 +55,38 @@ export default {
         monthly_cap: budget.monthly_token_cap,
         used: budget.tokens_used_this_period,
         remaining: Math.max(0, budget.monthly_token_cap - budget.tokens_used_this_period),
-      } : { error: 'no_budget_found', org_id: orgId }, 200);
+      } : { error: 'no_budget_found', org_id: orgId }, 200, origin);
     }
 
     if (req.method !== 'POST') {
-      return json({ error: 'method_not_allowed' }, 405);
+      return json({ error: 'method_not_allowed' }, 405, origin);
     }
 
     // POST /stream — streaming LLM response
     if (url.pathname === '/stream') {
-      return handleStream(req, env);
+      return handleStream(req, env, origin);
     }
 
     if (url.pathname !== '/generate') {
-      return json({ error: 'not_found' }, 404);
+      return json({ error: 'not_found' }, 404, origin);
     }
 
     let body: GenerateRequest;
     try {
       body = await req.json();
     } catch {
-      return json({ error: 'invalid_json' }, 400);
+      return json({ error: 'invalid_json' }, 400, origin);
     }
 
     // Validate
     if (!body.messages?.length) {
-      return json({ error: 'missing_field', field: 'messages' }, 400);
+      return json({ error: 'missing_field', field: 'messages' }, 400, origin);
     }
     if (!body.tier || !['standard', 'quality'].includes(body.tier)) {
-      return json({ error: 'invalid_tier', valid: ['standard', 'quality'] }, 400);
+      return json({ error: 'invalid_tier', valid: ['standard', 'quality'] }, 400, origin);
     }
     if (!body.org_id) {
-      return json({ error: 'missing_field', field: 'org_id' }, 400);
+      return json({ error: 'missing_field', field: 'org_id' }, 400, origin);
     }
 
     // ── 1. Budget check ──
@@ -95,6 +101,7 @@ export default {
           message: 'Contact your org admin to increase the budget.',
         },
         429,
+        origin,
       );
     }
 
@@ -110,7 +117,7 @@ export default {
       })) as AiTextGenerationOutput;
     } catch (err) {
       console.error('Workers AI error:', err);
-      return json({ error: 'ai_call_failed', detail: String(err) }, 502);
+      return json({ error: 'ai_call_failed', detail: String(err) }, 502, origin);
     }
 
     // ── 3. Track tokens ──
@@ -130,7 +137,7 @@ export default {
       throttle_warning: throttle,
     };
 
-    return json(response, 200);
+    return json(response, 200, origin);
   },
 };
 
@@ -138,29 +145,29 @@ export default {
 //  POST /stream — SSE streaming
 // ════════════════════════════════════════════════════════
 
-async function handleStream(req: Request, env: Env): Promise<Response> {
+async function handleStream(req: Request, env: Env, origin: string | null): Promise<Response> {
   let body: GenerateRequest;
   try {
     body = await req.json();
   } catch {
-    return json({ error: 'invalid_json' }, 400);
+    return json({ error: 'invalid_json' }, 400, origin);
   }
 
   if (!body.messages?.length) {
-    return json({ error: 'missing_field', field: 'messages' }, 400);
+    return json({ error: 'missing_field', field: 'messages' }, 400, origin);
   }
   if (!body.tier || !['standard', 'quality'].includes(body.tier)) {
-    return json({ error: 'invalid_tier', valid: ['standard', 'quality'] }, 400);
+    return json({ error: 'invalid_tier', valid: ['standard', 'quality'] }, 400, origin);
   }
   if (!body.org_id) {
-    return json({ error: 'missing_field', field: 'org_id' }, 400);
+    return json({ error: 'missing_field', field: 'org_id' }, 400, origin);
   }
 
   // Budget check
   await ensureBudget(env.DB, body.org_id);
   const budget = await getBudget(env.DB, body.org_id);
   if (budget && budget.tokens_used_this_period >= budget.monthly_token_cap) {
-    return json({ error: 'budget_exhausted' }, 429);
+    return json({ error: 'budget_exhausted' }, 429, origin);
   }
 
   const model = MODELS[body.tier];
@@ -182,11 +189,12 @@ async function handleStream(req: Request, env: Env): Promise<Response> {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
+        ...corsHeadersFor(origin),
       },
     });
   } catch (err) {
     console.error('Stream error:', err);
-    return json({ error: 'ai_call_failed', detail: String(err) }, 502);
+    return json({ error: 'ai_call_failed', detail: String(err) }, 502, origin);
   }
 }
 
@@ -300,9 +308,13 @@ async function trackTokens(db: D1Database, orgId: string, tokens: number): Promi
     .run();
 }
 
-function json(data: unknown, status: number): Response {
+/** Response helper with CORS headers from origin. */
+function json(data: unknown, status: number, origin?: string | null): Response {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...corsHeadersFor(origin),
+    },
   });
 }
