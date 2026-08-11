@@ -370,17 +370,28 @@ export default {
   // ── Queue consumer: processes index jobs asynchronously ──
   async queue(batch: MessageBatch<IndexJob>, env: Env): Promise<void> {
     for (const msg of batch.messages) {
+      const lessonId = msg.body?.entity?.id || "unknown";
+      const orgId = msg.body?.org_id || "unknown";
       try {
-        console.log(`[queue] processing job for ${msg.body?.entity?.id || "unknown"}`);
+        console.log(`[queue] processing job for ${lessonId}`);
         const result = await handleIndex(msg.body, env);
         if (result.status >= 400) {
-          console.error(`[queue] job failed with ${result.status}: ${await result.text()}`);
+          const errBody = await result.json().catch(() => ({ error: "unknown" })) as any;
+          console.error(`[queue] job failed with ${result.status}: ${JSON.stringify(errBody)}`);
+          await notifyLms(env, lessonId, orgId, "failed", { error: errBody?.error || `HTTP ${result.status}` });
           msg.retry({ delaySeconds: 5 });
         } else {
+          const body = await result.json() as any;
+          await notifyLms(env, lessonId, orgId, body?.status || "indexed", {
+            chunks: body?.chunks,
+            content_length: body?.content_length,
+            transcript_source: body?.transcript_source,
+          });
           msg.ack();
         }
       } catch (err: any) {
         console.error(`[queue] job error: ${err.message}`);
+        await notifyLms(env, lessonId, orgId, "failed", { error: err.message });
         msg.retry({ delaySeconds: 10 });
       }
     }
@@ -1098,4 +1109,41 @@ async function handleBackfill(body: BackfillRequest, env: Env): Promise<Response
   }
 
   return Response.json({ status: "queued", queued, skipped });
+}
+
+// ════════════════════════════════════════════════════════
+//  LMS Callback — notify LMS when indexing completes
+// ════════════════════════════════════════════════════════
+
+/**
+ * POST /api/v1/webhooks/indexing-result on the LMS.
+ * Fire-and-forget — never blocks queue processing.
+ */
+async function notifyLms(
+  env: Env,
+  lessonId: string,
+  orgId: string,
+  status: "indexed" | "fallback" | "failed",
+  details: { chunks?: number; content_length?: number; transcript_source?: string; error?: string }
+): Promise<void> {
+  try {
+    const { fetchLms: lmsFetch } = await import("../../shared/fetch-lms");
+    await lmsFetch(env, {
+      path: "/api/v1/webhooks/indexing-result",
+      method: "POST",
+      body: {
+        lesson_id: lessonId,
+        org_id: orgId,
+        status,
+        chunks: details.chunks ?? 0,
+        content_length: details.content_length ?? 0,
+        transcript_source: details.transcript_source ?? "none",
+        error: details.error ?? null,
+        timestamp: new Date().toISOString(),
+      },
+    });
+  } catch {
+    // Fire-and-forget — LMS may be unreachable
+    console.error(`[notifyLms] failed to notify LMS for ${lessonId}`);
+  }
 }

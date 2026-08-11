@@ -71,9 +71,48 @@ X-Webhook-Secret: <secret>
 ```
 → `200 { "status": "deindexed", "vectors_removed": 3 }`
 
+**POST /backfill** — bulk re-index all Stream videos under an org:
+```
+POST https://ai-indexing.yomi-alarape.workers.dev/backfill
+X-Webhook-Secret: <secret>
+
+{ "org_id": "<uuid>" }
+```
+→ `200 { "status": "queued", "queued": 28, "skipped": 5 }`
+
+This lists all Stream videos, queues every `ready` one for indexing under the given org. No filtering by course/module — it indexes everything. Use when setting up a new org or after bulk content upload.
+
 For PDF/PPTX: use `"contentType": "pdf"` and include `"r2Key"` or inline `"content"`. Video uses `"cloudflareVideoId"`.
 
-### 3. Frontend: Embed These AI Widgets
+### 3. Backend: Receive This Webhook (Indexing Callback)
+
+The AI indexing worker POSTs back to the LMS when each video finishes indexing. Auth: `X-API-Key: <LMS_INTERNAL_KEY>`.
+
+**POST /api/v1/webhooks/indexing-result** — called after each queue job completes:
+```json
+{
+  "lesson_id": "17bc6079faade8bf4188d58520f88112",
+  "org_id": "13a240e8-54b9-4c00-9b19-47eb2f10fa16",
+  "status": "indexed",
+  "chunks": 5,
+  "content_length": 3240,
+  "transcript_source": "existing",
+  "error": null,
+  "timestamp": "2026-08-10T09:30:00.000Z"
+}
+```
+
+| Field | Values | Notes |
+|-------|--------|-------|
+| `status` | `indexed`, `fallback`, `failed` | `fallback` = metadata-only (no captions), `failed` = error (will retry) |
+| `transcript_source` | `existing`, `ai_generated`, `none` | `existing` = pre-generated captions, `ai_generated` = on-the-fly, `none` = text/metadata only |
+| `chunks` | number | Vector chunks stored (0 if failed) |
+| `error` | string or null | Error message when `status: "failed"` |
+
+> **Note:** `lesson_id` is the **Stream video ID** (hex string), not the LMS lesson UUID. Map it back to your lesson record using `cloudflareVideoId`.
+> **Note:** The worker may retry failures — you may receive multiple `failed` callbacks for the same video. LMS should treat these as idempotent (update, not insert).
+
+### 4. Frontend: Embed These AI Widgets
 
 Every request includes `learner_id` and `org_id`. No auth required currently.
 
@@ -177,9 +216,13 @@ Workers never throw 5xx errors. Check `ai_status` on every response.
 - [ ] `GET /api/v1/admin/assessments/aggregate?organization_id=<uuid>&period=<period>`
 - [ ] `GET /api/v1/admin/engagement?organization_id=<uuid>&period=<period>`
 
-**Backend — Webhooks:**
+**Backend — Webhooks (LMS → Worker):**
 - [ ] `POST /index` when lesson is published/updated
 - [ ] `POST /deindex` when lesson is deleted/unpublished
+- [ ] `POST /backfill` when bulk re-indexing all content
+
+**Backend — Webhooks (Worker → LMS):**
+- [ ] `POST /api/v1/webhooks/indexing-result` — receive indexing completion callbacks
 
 **Frontend — Learner widgets:**
 - [ ] Tutor — `POST /tutor/ask` + `POST /tutor/clear`
