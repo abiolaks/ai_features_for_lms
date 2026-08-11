@@ -16,21 +16,28 @@
       --red: #ef4444;
       --blue: #3b82f6;
       --purple: #a855f7;
+      --orange: #f97316;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: var(--bg); color: var(--text); line-height: 1.6;
-      padding: 2rem; max-width: 1200px; margin: 0 auto;
+      padding: 2rem; max-width: 1400px; margin: 0 auto;
     }
     h1 { font-size: 1.8rem; margin-bottom: 0.25rem; }
-    .subtitle { color: var(--muted); margin-bottom: 2rem; }
+    .subtitle { color: var(--muted); margin-bottom: 0.5rem; }
+    .phase-badge { display: inline-block; padding: 0.15rem 0.6rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; margin-left: 0.5rem; }
+    .phase-1 { background: #1e3a5f; color: var(--blue); }
+    .phase-2 { background: #3b1f5e; color: var(--purple); }
 
     /* Progress bar */
-    .progress-bar-wrap { margin-bottom: 2rem; }
+    .progress-bar-wrap { margin-bottom: 1.5rem; }
     .progress-bar-label { display: flex; justify-content: space-between; margin-bottom: 0.5rem; font-size: 0.85rem; color: var(--muted); }
     .progress-bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
     .progress-fill { height: 100%; background: linear-gradient(90deg, var(--blue), var(--purple)); border-radius: 4px; transition: width 0.5s ease; }
+
+    /* Section headers */
+    .section-header { font-size: 0.85rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin: 1.5rem 0 0.75rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border); }
 
     /* Grid */
     .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 1.25rem; }
@@ -43,7 +50,7 @@
     .card.loading { opacity: 0.6; }
     .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
     .card-title { font-weight: 600; font-size: 1rem; }
-    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
     .status-dot.ok { background: var(--green); }
     .status-dot.warn { background: var(--yellow); }
     .status-dot.err { background: var(--red); }
@@ -52,7 +59,7 @@
     .card-body .metric { color: var(--text); font-weight: 600; }
     .card-body .row { display: flex; justify-content: space-between; margin-bottom: 0.35rem; }
     .card-body .label { color: var(--muted); }
-    pre { background: var(--bg); padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; overflow-x: auto; margin-top: 0.5rem; white-space: pre-wrap; }
+    pre { background: var(--bg); padding: 0.5rem; border-radius: 6px; font-size: 0.8rem; overflow-x: auto; margin-top: 0.5rem; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
 
     /* Tutor playground */
     .tutor-input { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
@@ -63,65 +70,94 @@
     .tutor-answer.visible { display: block; }
     .citation { font-size: 0.75rem; color: var(--muted); margin-top: 0.25rem; }
 
+    /* Quick-stat */
+    .quick-stat { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin-right: 0.3rem; }
+    .quick-stat.good { background: #14532d; color: var(--green); }
+    .quick-stat.warn { background: #422006; color: var(--orange); }
+
     /* Footer */
     footer { margin-top: 2rem; text-align: center; font-size: 0.75rem; color: var(--muted); }
   </style>
 </head>
 <body>
   <h1>⚡ AI Features Dashboard</h1>
-  <p class="subtitle">All AI Workers — live status from production</p>
+  <p class="subtitle">All 13 AI Workers — live status from production</p>
 
   <div class="progress-bar-wrap">
-    <div class="progress-bar-label"><span>AI Features Complete</span><span id="progress-label">0 / 6</span></div>
+    <div class="progress-bar-label"><span>AI Workers Healthy</span><span id="progress-label">0 / 13</span></div>
     <div class="progress-bar"><div class="progress-fill" id="progress-fill" style="width:0%"></div></div>
   </div>
 
+  <!-- ──── Phase 1 ──── -->
+  <div class="section-header">Phase 1 — Learner &amp; Content</div>
   <div class="cards">
-    <!-- AI03: Gateway -->
-    <div class="card" id="card-gateway">
+    <div class="card loading" id="card-gateway">
       <div class="card-header"><span class="card-title">🔌 AI03 — LLM Gateway</span><span class="status-dot" id="dot-gateway"></span></div>
       <div class="card-body" id="body-gateway">Loading…</div>
     </div>
-
-    <!-- AI01: Indexing -->
-    <div class="card" id="card-indexing">
+    <div class="card loading" id="card-indexing">
       <div class="card-header"><span class="card-title">📚 AI01 — Content Indexing</span><span class="status-dot" id="dot-indexing"></span></div>
       <div class="card-body" id="body-indexing">Loading…</div>
     </div>
-
-    <!-- AI04: Tutor -->
-    <div class="card" id="card-tutor">
+    <div class="card loading" id="card-tutor">
       <div class="card-header"><span class="card-title">🤖 AI04 — Grounded Tutor</span><span class="status-dot" id="dot-tutor"></span></div>
       <div class="card-body" id="body-tutor">
         <p>Ask a question about any indexed lesson:</p>
         <div class="tutor-input">
-          <input type="text" id="tutor-q" placeholder="What are list comprehensions?" value="What is Python?">
+          <input type="text" id="tutor-q" placeholder="e.g. What are list comprehensions?" value="What is Python?">
           <button onclick="askTutor()">Ask</button>
         </div>
         <div class="tutor-answer" id="tutor-answer"></div>
       </div>
     </div>
-
-    <!-- AI08: Insights -->
-    <div class="card" id="card-insights">
+    <div class="card loading" id="card-insights">
       <div class="card-header"><span class="card-title">📊 AI08 — Post-Quiz Insights</span><span class="status-dot" id="dot-insights"></span></div>
       <div class="card-body" id="body-insights">Loading…</div>
     </div>
-
-    <!-- AI06: Paths -->
-    <div class="card" id="card-paths">
+    <div class="card loading" id="card-paths">
       <div class="card-header"><span class="card-title">🗺️ AI06 — Learning Paths</span><span class="status-dot" id="dot-paths"></span></div>
       <div class="card-body" id="body-paths">Loading…</div>
     </div>
-
-    <!-- AI07: Recommendations -->
-    <div class="card" id="card-recs">
+    <div class="card loading" id="card-recs">
       <div class="card-header"><span class="card-title">⭐ AI07 — Recommendations</span><span class="status-dot" id="dot-recs"></span></div>
       <div class="card-body" id="body-recs">Loading…</div>
     </div>
   </div>
 
-  <footer>AI-Powered LMS · Open-source LLMs via Ollama · Zero API keys</footer>
+  <!-- ──── Phase 2 ──── -->
+  <div class="section-header">Phase 2 — Admin, Authoring &amp; Platform</div>
+  <div class="cards">
+    <div class="card loading" id="card-assistant">
+      <div class="card-header"><span class="card-title">💬 F06 — Platform Assistant</span><span class="status-dot" id="dot-assistant"></span></div>
+      <div class="card-body" id="body-assistant">Loading…</div>
+    </div>
+    <div class="card loading" id="card-question-gen">
+      <div class="card-header"><span class="card-title">✍️ F07 — Question Gen</span><span class="status-dot" id="dot-question-gen"></span></div>
+      <div class="card-body" id="body-question-gen">Loading…</div>
+    </div>
+    <div class="card loading" id="card-quality">
+      <div class="card-header"><span class="card-title">✅ F08 — Quality Checks</span><span class="status-dot" id="dot-quality"></span></div>
+      <div class="card-body" id="body-quality">Loading…</div>
+    </div>
+    <div class="card loading" id="card-mentor">
+      <div class="card-header"><span class="card-title">🎯 F03a — Skill-Gap Analysis</span><span class="status-dot" id="dot-mentor"></span></div>
+      <div class="card-body" id="body-mentor">Loading…</div>
+    </div>
+    <div class="card loading" id="card-analytics">
+      <div class="card-header"><span class="card-title">📈 F05 — Admin Narratives</span><span class="status-dot" id="dot-analytics"></span></div>
+      <div class="card-body" id="body-analytics">Loading…</div>
+    </div>
+    <div class="card loading" id="card-bottlenecks">
+      <div class="card-header"><span class="card-title">🚧 F04a — Bottleneck Detection</span><span class="status-dot" id="dot-bottlenecks"></span></div>
+      <div class="card-body" id="body-bottlenecks">Loading…</div>
+    </div>
+    <div class="card loading" id="card-engagement">
+      <div class="card-header"><span class="card-title">👥 F04b — Engagement Monitoring</span><span class="status-dot" id="dot-engagement"></span></div>
+      <div class="card-body" id="body-engagement">Loading…</div>
+    </div>
+  </div>
+
+  <footer>AI-Powered LMS · All 13 workers deployed · Open-source LLMs via Workers AI</footer>
 
 <script>
 // ════════════════════════════════════════════════════════
@@ -129,16 +165,24 @@
 // ════════════════════════════════════════════════════════
 
 const WORKERS = {
-  gateway:    'https://ai-gateway.yomi-alarape.workers.dev',
-  indexing:   'https://ai-indexing.yomi-alarape.workers.dev',
-  tutor:      'https://ai-tutor.yomi-alarape.workers.dev',
-  insights:   'https://ai-insights.yomi-alarape.workers.dev',
-  paths:      'https://ai-paths.yomi-alarape.workers.dev',
-  recs:       'https://ai-recommendations.yomi-alarape.workers.dev',
+  gateway:       'https://ai-gateway.yomi-alarape.workers.dev',
+  indexing:      'https://ai-indexing.yomi-alarape.workers.dev',
+  tutor:         'https://ai-tutor.yomi-alarape.workers.dev',
+  insights:      'https://ai-insights.yomi-alarape.workers.dev',
+  paths:         'https://ai-paths.yomi-alarape.workers.dev',
+  recs:          'https://ai-recommendations.yomi-alarape.workers.dev',
+  assistant:     'https://ai-assistant.yomi-alarape.workers.dev',
+  questionGen:   'https://ai-question-gen.yomi-alarape.workers.dev',
+  quality:       'https://ai-quality.yomi-alarape.workers.dev',
+  mentor:        'https://ai-mentor.yomi-alarape.workers.dev',
+  analytics:     'https://ai-analytics.yomi-alarape.workers.dev',
+  bottlenecks:   'https://ai-bottlenecks.yomi-alarape.workers.dev',
+  engagement:    'https://ai-engagement.yomi-alarape.workers.dev',
 };
 
 const ORG_ID = 'demo';
 const LEARNER_ID = 'dashboard-demo';
+const PERIOD = 'last_30_days';
 const DEMO_PROFILE = { skills: ['python', 'sql'], goals: 'become a machine learning engineer', experience_level: 'intermediate' };
 const DEMO_CATALOGUE = [
   { id: 'c1', title: 'Python Basics', difficulty: 'beginner', category: 'programming' },
@@ -149,7 +193,7 @@ const DEMO_CATALOGUE = [
 const DEMO_PROGRESS = [{ title: 'Python Basics', status: 'completed', progress_pct: 100 }];
 
 let healthy = 0;
-const TOTAL = 6;
+const TOTAL = 13;
 
 function updateProgress() {
   document.getElementById('progress-fill').style.width = `${(healthy / TOTAL) * 100}%`;
@@ -158,6 +202,7 @@ function updateProgress() {
 
 function setCard(id, status, html) {
   const dot = document.getElementById(`dot-${id}`);
+  if (!dot) return;
   dot.className = `status-dot ${status}`;
   if (status === 'ok') healthy++;
   document.getElementById(`body-${id}`).innerHTML = html;
@@ -167,11 +212,11 @@ function setCard(id, status, html) {
 
 async function fetchJson(url, opts = {}) {
   try {
-    const res = await fetch(url, { 
+    const res = await fetch(url, {
       method: opts.method || 'GET',
       headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
       body: opts.body ? JSON.stringify(opts.body) : undefined,
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(opts.timeout || 15000),
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     return await res.json();
@@ -180,13 +225,26 @@ async function fetchJson(url, opts = {}) {
   }
 }
 
+/** Quick reachability check — just see if worker responds at all. */
+async function pingOk(url) {
+  try {
+    const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(8000) });
+    return res.ok || res.status === 405; // 405 = alive, just wrong method
+  } catch { return false; }
+}
+
 function formatTokens(n) {
   if (n >= 1_000_000) return `${(n/1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n/1_000).toFixed(1)}K`;
   return String(n);
 }
+function trunc(s, max) { return s && s.length > max ? s.slice(0, max) + '…' : s; }
 
-// ──── AI03: Gateway ────
+// ════════════════════════════════════════════════════════
+//  Phase 1 Workers
+// ════════════════════════════════════════════════════════
+
+// ── AI03: Gateway ──
 (async () => {
   const data = await fetchJson(`${WORKERS.gateway}/health?org_id=${ORG_ID}`);
   if (data.error) return setCard('gateway', 'err', `❌ <span class="metric">${data.error}</span>`);
@@ -202,7 +260,7 @@ function formatTokens(n) {
   `);
 })();
 
-// ──── AI01: Indexing ────
+// ── AI01: Indexing ──
 (async () => {
   const data = await fetchJson(`${WORKERS.indexing}/status`);
   if (data.error) return setCard('indexing', 'warn', `⚠️ Status unavailable: <span class="metric">${data.error}</span>`);
@@ -216,11 +274,11 @@ function formatTokens(n) {
   `);
 })();
 
-// ──── AI04: Tutor (has real playground) ────
+// ── AI04: Tutor (with playground) ──
 setCard('tutor', 'ok', `
   <p>Interactive Q&A — type a question below:</p>
   <div class="tutor-input">
-    <input type="text" id="tutor-q" placeholder="What are list comprehensions?" value="What is Python?">
+    <input type="text" id="tutor-q" placeholder="e.g. What are list comprehensions?" value="What is Python?">
     <button onclick="askTutor()">Ask</button>
   </div>
   <div class="tutor-answer" id="tutor-answer"></div>
@@ -231,19 +289,14 @@ async function askTutor() {
   const answerDiv = document.getElementById('tutor-answer');
   answerDiv.textContent = 'Thinking…';
   answerDiv.classList.add('visible');
-  
-  // Try the real tutor with a random session
   const sid = `dash-${Date.now()}`;
   const data = await fetchJson(`${WORKERS.tutor}/tutor/ask`, {
     method: 'POST',
     body: { question: input.value, learner_id: LEARNER_ID, lesson_id: 'demo', course_id: 'demo', org_id: ORG_ID, session_id: sid }
   });
-
   if (data.answer) {
     answerDiv.innerHTML = `<strong>Answer:</strong> ${data.answer}`;
-    if (data.citations?.length) {
-      answerDiv.innerHTML += `<div class="citation">📖 ${data.citations[0].lesson_title} (score: ${data.citations[0].score?.toFixed(2)})</div>`;
-    }
+    if (data.citations?.length) answerDiv.innerHTML += `<div class="citation">📖 ${data.citations[0].lesson_title} (score: ${data.citations[0].score?.toFixed(2)})</div>`;
   } else if (data.error) {
     answerDiv.innerHTML = `⚠️ <span style="color:var(--yellow)">${data.error}</span>`;
   } else {
@@ -251,49 +304,45 @@ async function askTutor() {
   }
 }
 
-// ──── AI08: Insights ────
+// ── AI08: Insights ──
 (async () => {
-  const data = await fetchJson(`${WORKERS.insights}/health`);
-  if (data.status === 'ok') {
-    setCard('insights', 'ok', `
-      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">Online</span></div>
-      <div class="row"><span class="label">Endpoint</span><span class="metric">POST /insights/generate</span></div>
-      <p style="margin-top:0.5rem;font-size:0.8rem">Accepts attempt IDs from the LMS quiz engine.</p>
-    `);
-  } else {
-    setCard('insights', 'warn', `⚠️ Health check failed: <span class="metric">${data.error || 'unreachable'}</span>`);
-  }
+  const ok = await pingOk(`${WORKERS.insights}/health`);
+  setCard('insights', ok ? 'ok' : 'warn', ok
+    ? `<div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">Online</span></div>
+       <div class="row"><span class="label">Endpoint</span><span class="metric">POST /insights/generate</span></div>
+       <p style="margin-top:0.5rem;font-size:0.8rem">Post-quiz coaching + mentor session prep.</p>`
+    : `⚠️ Unreachable`);
 })();
 
-// ──── AI06: Paths (generates from demo data) ────
+// ── AI06: Paths ──
 (async () => {
   const data = await fetchJson(`${WORKERS.paths}/paths/generate`, {
     method: 'POST',
     body: { learner_id: LEARNER_ID, org_id: ORG_ID, profile: DEMO_PROFILE, catalogue: DEMO_CATALOGUE, progress: DEMO_PROGRESS }
   });
   if (data.path?.length) {
-    const items = data.path.slice(0, 4).map((c, i) => `<div class="row"><span>${i+1}. ${c.course_title}</span><span style="color:var(--muted);font-size:0.75rem">${c.why_this_fits?.slice(0,60)}…</span></div>`).join('');
+    const items = data.path.slice(0, 4).map((c, i) => `<div class="row"><span>${i+1}. ${trunc(c.course_title, 35)}</span><span style="color:var(--muted);font-size:0.75rem">${trunc(c.why_this_fits, 50)}</span></div>`).join('');
     setCard('paths', 'ok', `
       <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status}</span></div>
       <div style="margin-top:0.5rem">${items}</div>
     `);
   } else {
-    setCard('paths', 'warn', `⚠️ ${data.ai_status || 'No path generated'}: <span class="metric">${data.error || JSON.stringify(data).slice(0,100)}</span>`);
+    setCard('paths', 'warn', `⚠️ ${data.ai_status || 'No path'}: <span class="metric">${data.error || 'empty'}</span>`);
   }
 })();
 
-// ──── AI07: Recommendations ────
+// ── AI07: Recommendations ──
 (async () => {
   const data = await fetchJson(`${WORKERS.recs}/recommendations/dashboard`, {
     method: 'POST',
     body: { learner_id: LEARNER_ID, org_id: ORG_ID, profile: DEMO_PROFILE, catalogue: DEMO_CATALOGUE, progress: DEMO_PROGRESS }
   });
   if (data.recommendations?.length) {
-    const items = data.recommendations.slice(0, 3).map(r => 
+    const items = data.recommendations.slice(0, 3).map(r =>
       `<div style="margin-bottom:0.5rem">
-        <span class="metric">${r.course_title}</span>
+        <span class="metric">${trunc(r.course_title, 30)}</span>
         <span style="color:var(--muted);font-size:0.75rem">(${r.fit_level}, score ${r.score})</span>
-        <div style="font-size:0.8rem;color:var(--muted)">${r.ai_why_this_fits}</div>
+        <div style="font-size:0.8rem;color:var(--muted)">${trunc(r.ai_why_this_fits, 80)}</div>
       </div>`
     ).join('');
     setCard('recs', 'ok', `
@@ -302,7 +351,161 @@ async function askTutor() {
       <div style="margin-top:0.5rem">${items}</div>
     `);
   } else {
-    setCard('recs', 'warn', `⚠️ ${data.ai_status || 'No recommendations'}: <span class="metric">${data.error || 'empty'}</span>`);
+    setCard('recs', 'warn', `⚠️ ${data.ai_status || 'No recs'}: <span class="metric">${data.error || 'empty'}</span>`);
+  }
+})();
+
+// ════════════════════════════════════════════════════════
+//  Phase 2 Workers
+// ════════════════════════════════════════════════════════
+
+// ── F06: Platform Assistant ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.assistant}/assistant/ask`, {
+    method: 'POST',
+    body: { question: 'What courses are available?', learner_id: LEARNER_ID, org_id: ORG_ID },
+    timeout: 20000,
+  });
+  if (data.answer) {
+    setCard('assistant', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">Online</span></div>
+      <div class="row"><span class="label">History</span><span class="metric">${data.history_length ?? 0} msgs</span></div>
+      <div style="margin-top:0.5rem;font-size:0.8rem">${trunc(data.answer, 150)}</div>
+      ${data.suggested_courses?.length ? `<div class="citation">📚 ${data.suggested_courses.length} courses suggested</div>` : ''}
+    `);
+  } else {
+    const ok = data.error?.includes('HTTP') ? false : await pingOk(WORKERS.assistant);
+    setCard('assistant', ok ? 'warn' : 'err',
+      ok ? `⚠️ Degraded: <span class="metric">${data.error || 'no answer'}</span>` : `❌ Unreachable: <span class="metric">${data.error}</span>`);
+  }
+})();
+
+// ── F07: Question Gen ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.questionGen}/questions/generate`, {
+    method: 'POST',
+    body: { lesson_id: 'demo', org_id: ORG_ID, count: 2, type: 'multiple-choice' },
+    timeout: 25000,
+  });
+  if (data.questions?.length) {
+    setCard('question-gen', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <div class="row"><span class="label">Generated</span><span class="metric">${data.questions.length} questions</span></div>
+      <div style="margin-top:0.5rem;font-size:0.8rem">${trunc(data.questions[0]?.text, 100)}</div>
+    `);
+  } else {
+    const ok = await pingOk(WORKERS.questionGen);
+    setCard('question-gen', ok ? 'warn' : 'err',
+      ok ? `⚠️ ${data.ai_status || 'No questions'}: <span class="metric">${data.error || 'empty'}</span>` : `❌ Unreachable`);
+  }
+})();
+
+// ── F08: Quality Checks ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.quality}/questions/validate`, {
+    method: 'POST',
+    body: { questions: [{ text: 'What is 2+2?', options: ['3','4','5','6'], correct_answer: '4', difficulty: 'easy', topic: 'math', source_content: 'Basic arithmetic.' }] },
+    timeout: 25000,
+  });
+  if (data.results) {
+    setCard('quality', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'validated'}</span></div>
+      <div class="row"><span class="label">Passed</span><span class="metric">${data.passed ?? '?'} / ${data.total ?? '?'}</span></div>
+    `);
+  } else {
+    const ok = await pingOk(WORKERS.quality);
+    setCard('quality', ok ? 'warn' : 'err',
+      ok ? `⚠️ ${data.ai_status || 'No result'}: <span class="metric">${data.error || 'empty'}</span>` : `❌ Unreachable`);
+  }
+})();
+
+// ── F03a: Skill-Gap Analysis ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.mentor}/mentor/skill-gap?learner_id=${LEARNER_ID}&org_id=${ORG_ID}`, { timeout: 20000 });
+  if (data.gaps?.length) {
+    const gapItems = data.gaps.slice(0, 3).map(g =>
+      `<div class="row"><span>${trunc(g.skill, 25)}</span><span class="quick-stat warn">gap: ${g.current_level}→${g.required_level}</span></div>`
+    ).join('');
+    setCard('mentor', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <div class="row"><span class="label">Gaps found</span><span class="metric">${data.gaps.length}</span></div>
+      <div style="margin-top:0.5rem">${gapItems}</div>
+    `);
+  } else if (data.summary) {
+    setCard('mentor', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <p style="margin-top:0.5rem;font-size:0.8rem">${trunc(data.summary, 150)}</p>
+    `);
+  } else {
+    setCard('mentor', 'warn', `⚠️ ${data.ai_status || 'No data'}: <span class="metric">${data.error || 'empty'}</span>`);
+  }
+})();
+
+// ── F05: Admin Narratives ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.analytics}/admin/narrative?org_id=${ORG_ID}&period=${PERIOD}`, { timeout: 25000 });
+  if (data.narrative) {
+    const highlights = data.highlights?.slice(0, 2).map(h => `<div class="quick-stat ${h.type === 'positive' ? 'good' : 'warn'}">${trunc(h.text, 50)}</div>`).join(' ') || '';
+    setCard('analytics', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <div class="row"><span class="label">Period</span><span class="metric">${PERIOD.replace(/_/g, ' ')}</span></div>
+      <div style="margin-top:0.5rem;font-size:0.8rem">${trunc(data.narrative, 200)}</div>
+      ${highlights ? `<div style="margin-top:0.35rem">${highlights}</div>` : ''}
+    `);
+  } else {
+    const ok = await pingOk(`${WORKERS.analytics}/admin/narrative?org_id=${ORG_ID}&period=${PERIOD}`);
+    setCard('analytics', ok ? 'warn' : 'err',
+      ok ? `⚠️ ${data.ai_status || 'No narrative'}: <span class="metric">${data.error || 'empty'}</span>` : `❌ Unreachable`);
+  }
+})();
+
+// ── F04a: Bottlenecks ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.bottlenecks}/admin/bottlenecks?org_id=${ORG_ID}&period=${PERIOD}`, { timeout: 25000 });
+  if (data.bottlenecks?.length) {
+    const items = data.bottlenecks.slice(0, 3).map(b =>
+      `<div class="row"><span>${trunc(b.module || b.course, 25)}</span><span class="quick-stat warn">${b.metric}</span></div>`
+    ).join('');
+    setCard('bottlenecks', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <div class="row"><span class="label">Bottlenecks</span><span class="metric">${data.bottlenecks.length}</span></div>
+      <div style="margin-top:0.5rem">${items}</div>
+      ${data.summary ? `<p style="margin-top:0.5rem;font-size:0.75rem">${trunc(data.summary, 120)}</p>` : ''}
+    `);
+  } else if (data.summary) {
+    setCard('bottlenecks', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <p style="margin-top:0.5rem;font-size:0.8rem">${trunc(data.summary, 200)}</p>
+    `);
+  } else {
+    const ok = await pingOk(`${WORKERS.bottlenecks}/admin/bottlenecks?org_id=${ORG_ID}&period=${PERIOD}`);
+    setCard('bottlenecks', ok ? 'warn' : 'err',
+      ok ? `⚠️ ${data.ai_status || 'No data'}: <span class="metric">${data.error || 'empty'}</span>` : `❌ Unreachable`);
+  }
+})();
+
+// ── F04b: Engagement ──
+(async () => {
+  const data = await fetchJson(`${WORKERS.engagement}/admin/engagement?org_id=${ORG_ID}&period=${PERIOD}`, { timeout: 25000 });
+  if (data.patterns?.length) {
+    const items = data.patterns.slice(0, 2).map(p =>
+      `<div class="row"><span>${trunc(p.title, 30)}</span><span class="quick-stat ${p.severity === 'low' ? 'good' : 'warn'}">${p.severity}</span></div>`
+    ).join('');
+    setCard('engagement', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <div class="row"><span class="label">Patterns</span><span class="metric">${data.patterns.length}</span></div>
+      ${data.metrics ? `<div class="row"><span class="label">Watch %</span><span class="metric">${data.metrics.avg_watch_pct ?? '—'}%</span></div>` : ''}
+      <div style="margin-top:0.5rem">${items}</div>
+    `);
+  } else if (data.summary) {
+    setCard('engagement', 'ok', `
+      <div class="row"><span class="label">Status</span><span class="metric" style="color:var(--green)">${data.ai_status || 'generated'}</span></div>
+      <p style="margin-top:0.5rem;font-size:0.8rem">${trunc(data.summary, 200)}</p>
+    `);
+  } else {
+    const ok = await pingOk(`${WORKERS.engagement}/admin/engagement?org_id=${ORG_ID}&period=${PERIOD}`);
+    setCard('engagement', ok ? 'warn' : 'err',
+      ok ? `⚠️ ${data.ai_status || 'No data'}: <span class="metric">${data.error || 'empty'}</span>` : `❌ Unreachable`);
   }
 })();
 </script>
