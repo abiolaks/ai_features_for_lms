@@ -1,0 +1,17 @@
+any commite changes
+
+---
+
+push
+
+---
+
+are the workers deploy with latest changes and are they working the way they should
+
+---
+
+what are the features that are left to implement
+
+---
+
+how does the demo daskboard works and what is it suppose to do
